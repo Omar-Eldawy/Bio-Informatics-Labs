@@ -1,19 +1,32 @@
 ---
-title: "lab1"
+title: "Lab 1"
+author: |
+  | Bahaa Khaled Mohamed 21010383
+  | Omar Aldawy Ibrahim Aldawy 21010864
+date: "`r Sys.Date()`"
 output:
-  pdf_document: default
+  pdf_document:
+    number_sections: true
+    toc: true
+    toc_depth: 2
+    highlight: tango
+    fig_caption: true
   html_document:
     df_print: paged
-date: "2025-02-16"
+geometry: margin=1in
+linestretch: 1.5
+header-includes:
+  - \usepackage{fancyhdr}
+  - \usepackage{framed}
+  - \usepackage{tcolorbox}
+  - \usepackage{mdframed}
+  - \usepackage{geometry}
+  - \usepackage{tikz}
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-
-## Bahaa Khaled Mohamed 21010383
-
-## Omar Aldawy 21010864
 
 # Declare Variables
 
@@ -102,6 +115,7 @@ print(paste("Rows where Petal.Length > 1.5 & Species == Setosa:", nrow(filtered_
 ```
 
 # Dependency
+
 ```{r eval=FALSE}
 install.packages('tidyverse')
 library(tidyverse)
@@ -121,7 +135,7 @@ print(colnames(dataset))
 
 # Data pre-processing
 
-## Determining the Working Set
+##   Determining the Working Set
 
 ```{r}
 library(dplyr)
@@ -145,7 +159,7 @@ ggplot(cancer_dataframe, aes(x = reorder(Type, -Count), y = Count, fill = Type))
   theme(legend.position = "none")  # Hide legend if unnecessary
 ```
 
-## Data Cleaning and Filtering
+##   Data Cleaning and Filtering
 
 ```{r}
 print(paste("-The number of NA in dataset is", sum(is.na(dataset))))
@@ -157,7 +171,7 @@ print(paste("-The number of rows after filtering is", nrow(filtered_dataset)))
 
 # Data Analysis
 
-## Genes Analysis
+##   Genes Analysis
 
 ```{r}
 genes <- dataset %>% select(!(1:2))
@@ -173,16 +187,22 @@ gene_summary <- bind_rows(mean_summary, sd_summary) %>%
   mutate(Summary = c("mean", "sd")) %>%
   select(Summary, everything())
   
+print(gene_summary)
+
 ```
 
-##Genes Analysis By Type
+##   Genes Analysis By Type
+
 ```{r}
 library(dplyr)
 library(tidyr)
 grouped_summary <- dataset %>%
   group_by(type) %>%
-  summarise(across(starts_with("X"), list(mean = ~mean(.x, na.rm = TRUE), sd = ~sd(.x, na.rm = TRUE)))) %>%
-  pivot_longer(-type, names_to = c("Gene", "Measure"), names_pattern = "(.*)_(mean|sd)") %>%
+  summarise(across(starts_with("X"),
+                   list(mean = ~mean(.x, na.rm = TRUE),
+                        sd = ~sd(.x, na.rm = TRUE)))) %>%
+  pivot_longer(-type, names_to = c("Gene", "Measure"),
+               names_pattern = "(.*)_(mean|sd)") %>%
   pivot_wider(names_from = Gene, values_from = value) %>%
   mutate(Measure = paste(Measure, type, sep = "_")) %>%
   select(-type) 
@@ -193,7 +213,7 @@ print(grouped_summary)
 
 ```
 
-## Save summaries to csv files
+##   Save summaries to csv files
 
 ```{r}
 save_to_csv <- function(ds, path) {
@@ -206,6 +226,4 @@ save_to_csv <- function(ds, path) {
 
 save_to_csv(gene_summary, "gene_summary.csv")
 save_to_csv(grouped_summary, "grouped_summary.csv")
-  
 ```
-
