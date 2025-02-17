@@ -1,0 +1,211 @@
+---
+title: "lab1"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+date: "2025-02-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Bahaa Khaled Mohamed 21010383
+
+## Omar Aldawy 21010864
+
+# Declare Variables
+
+```{r}
+num_var <- 10
+
+int_var <- 7L
+
+char_var <- "Bioinformatics"
+
+complex_var <- 4 + 3i
+
+print(num_var)
+print(int_var)
+print(char_var)
+print(complex_var)
+
+```
+
+# Data Type
+
+```{r}
+typeof(num_var)
+typeof(int_var)
+typeof(char_var)
+typeof(complex_var)
+```
+
+# Countdown using while loop
+
+```{r}
+count <- 10
+while (count >= 0) {
+  print(count)
+  count <- count - 1
+}
+```
+
+# Function to check even or odd
+
+```{r}
+check_even_odd <- function(num) {
+  if (num %% 2 == 0) {
+    print("Even")
+  } else {
+    print("Odd")
+  }
+}
+```
+
+# Create a vector
+
+```{r}
+vec <- c(1,2,3,4,5,6,7,8,9,10)
+
+for (element in vec) {
+  print(element)
+}
+```
+
+# Create a 4D array with random numbers
+
+```{r}
+array_4d <- array(runif(16, min=0, max=10), dim = c(2,2,2,2))
+print(array_4d)
+```
+
+# Iris
+
+```{r}
+data(iris)
+
+num_rows <- nrow(iris)
+num_cols <- ncol(iris)
+
+column_names <- colnames(iris)
+
+filtered_rows <- subset(iris, Petal.Length > 1.5 & Species == "setosa")
+
+print(paste("Number of rows:", num_rows))
+print(paste("Number of columns:", num_cols))
+print("Column names:")
+print(column_names)
+print(paste("Rows where Petal.Length > 1.5 & Species == Setosa:", nrow(filtered_rows)))
+
+```
+
+# Dependency
+```{r eval=FALSE}
+install.packages('tidyverse')
+library(tidyverse)
+library(dplyr)
+```
+
+# Read data-set
+
+```{r}
+dataset <- read.csv("BrainCancerMin.csv")
+
+print(paste("-Number of rows =", nrow(dataset)))
+print(paste("-Number of columns =", ncol(dataset)))
+print("-Column names are")
+print(colnames(dataset))
+```
+
+# Data pre-processing
+
+## Determining the Working Set
+
+```{r}
+library(dplyr)
+subset_dataset <- dataset %>% select(samples, type, 3:5, 147:150)
+
+type_count <- table(subset_dataset$type)
+the_most_occurring_type_of_cancer <- names(which.max(type_count))
+print(paste("The most occurring type of cancer is:", the_most_occurring_type_of_cancer))
+
+library(ggplot2)
+cancer_dataframe <- as.data.frame(type_count)
+colnames(cancer_dataframe) <- c("Type", "Count")
+
+ggplot(cancer_dataframe, aes(x = reorder(Type, -Count), y = Count, fill = Type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_brewer(palette = "Set2") +  # Use different colors for each type
+  labs(title = "Cancer Type Distribution",
+       x = "Cancer Type",
+       y = "Frequency") +
+  theme_minimal() +
+  theme(legend.position = "none")  # Hide legend if unnecessary
+```
+
+## Data Cleaning and Filtering
+
+```{r}
+print(paste("-The number of NA in dataset is", sum(is.na(dataset))))
+
+filtered_dataset <- dataset %>% filter(X1007_s_at > 12)
+print(paste("-The number of rows before filtering is", nrow(dataset)))
+print(paste("-The number of rows after filtering is", nrow(filtered_dataset)))
+```
+
+# Data Analysis
+
+## Genes Analysis
+
+```{r}
+genes <- dataset %>% select(!(1:2))
+
+mean_summary <- summarise(genes, across(where(is.numeric), 
+                                          \(x) mean(x, na.rm = TRUE)))
+
+sd_summary <- summarise(genes, across(where(is.numeric),
+                                          \(x) sd(x, na.rm = TRUE)))
+
+
+gene_summary <- bind_rows(mean_summary, sd_summary) %>%
+  mutate(Summary = c("mean", "sd")) %>%
+  select(Summary, everything())
+  
+```
+
+##Genes Analysis By Type
+```{r}
+library(dplyr)
+library(tidyr)
+grouped_summary <- dataset %>%
+  group_by(type) %>%
+  summarise(across(starts_with("X"), list(mean = ~mean(.x, na.rm = TRUE), sd = ~sd(.x, na.rm = TRUE)))) %>%
+  pivot_longer(-type, names_to = c("Gene", "Measure"), names_pattern = "(.*)_(mean|sd)") %>%
+  pivot_wider(names_from = Gene, values_from = value) %>%
+  mutate(Measure = paste(Measure, type, sep = "_")) %>%
+  select(-type) 
+
+colnames(grouped_summary)[1] <- "measure"
+
+print(grouped_summary)
+
+```
+
+## Save summaries to csv files
+
+```{r}
+save_to_csv <- function(ds, path) {
+  if(!endsWith(path, ".csv")){
+    path <- paste0(path, ".csv")
+  }
+  
+  write.csv(ds, path, row.names = TRUE)
+}
+
+save_to_csv(gene_summary, "gene_summary.csv")
+save_to_csv(grouped_summary, "grouped_summary.csv")
+  
+```
+
