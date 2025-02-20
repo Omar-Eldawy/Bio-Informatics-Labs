@@ -47,6 +47,7 @@ print(complex_var)
 ```
 
 # Data Type
+- return the type of each variable
 
 ```{r}
 typeof(num_var)
@@ -56,6 +57,7 @@ typeof(complex_var)
 ```
 
 # Countdown using while loop
+- countdown from 10 to 0 until the condition is false
 
 ```{r}
 count <- 10
@@ -78,6 +80,7 @@ check_even_odd <- function(num) {
 ```
 
 # Create a vector
+- group a collection of elements together
 
 ```{r}
 vec <- c(1,2,3,4,5,6,7,8,9,10)
@@ -95,6 +98,7 @@ print(array_4d)
 ```
 
 # Iris
+- we use the flowers data set to perform some operations
 
 ```{r}
 data(iris)
@@ -115,6 +119,7 @@ print(paste("Rows where Petal.Length > 1.5 & Species == Setosa:", nrow(filtered_
 ```
 
 # Dependency
+- we need some libraries to perform some operations optimally
 
 ```{r eval=FALSE}
 install.packages('tidyverse')
@@ -123,6 +128,7 @@ library(dplyr)
 ```
 
 # Read data-set
+- we read the data set from a csv file
 
 ```{r}
 dataset <- read.csv("BrainCancerMin.csv")
@@ -136,6 +142,10 @@ print(colnames(dataset))
 # Data pre-processing
 
 ##   Determining the Working Set
+- here we select the subset of the working data we want to work with
+- we select the samples, type, and the first 3 and last 4 genes
+- we also count the number of each type of cancer and plot the distribution
+- we use ggplot2 to plot the distribution
 
 ```{r}
 library(dplyr)
@@ -160,6 +170,10 @@ ggplot(cancer_dataframe, aes(x = reorder(Type, -Count), y = Count, fill = Type))
 ```
 
 ##   Data Cleaning and Filtering
+- we remove the rows with NA values
+- we filter the data set to keep only the rows with  gene X1007_s_at > 12
+- we print the number of rows before and after filtering
+- we also print the number of NA values in the data set
 
 ```{r}
 print(paste("-The number of NA in dataset is", sum(is.na(dataset))))
@@ -172,6 +186,8 @@ print(paste("-The number of rows after filtering is", nrow(filtered_dataset)))
 # Data Analysis
 
 ##   Genes Analysis
+- we calculate the mean and standard deviation of each gene
+- we print the results in a new data frame
 
 ```{r}
 genes <- dataset %>% select(!(1:2))
@@ -192,7 +208,8 @@ print(gene_summary)
 ```
 
 ##   Genes Analysis By Type
-
+- we calculate the mean and standard deviation of each gene by type
+- we print the results in a new data frame
 ```{r}
 library(dplyr)
 library(tidyr)
@@ -214,6 +231,7 @@ print(grouped_summary)
 ```
 
 ##   Save summaries to csv files
+- here we create a function to save the summaries to csv files
 
 ```{r}
 save_to_csv <- function(ds, path) {
