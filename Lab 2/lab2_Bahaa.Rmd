@@ -1,0 +1,325 @@
+---
+title: "lab2"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+date: "2025-03-01"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Lab 2
+# Bahaa Khaled Mohamed Ali 21010383
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+data <- read.csv("BrainCancerMin.csv")
+head(data)
+```
+# Part1 : Gene Expression
+## Task1.1
+### Reshape Data and Calculate Mean Expression per Gene
+
+```{r}
+genes <- data %>% select(!(1:2))
+
+mean_summary <- summarise(genes, across(where(is.numeric), 
+              \(x) mean(x, na.rm = TRUE)))%>% 
+                pivot_longer(everything(), names_to = "Genes", values_to = "Mean")
+
+#add the first row to the data frame
+Sample <- as.data.frame(t(data[1, -c(1,2)] ))
+colnames(Sample) <- colnames('Sample')
+mean_summary <- cbind(mean_summary , Sample)
+# make the row index starting from 1
+rownames(mean_summary) <- seq(1, nrow(mean_summary))
+```
+### Scatter Plot: Mean Expression vs. First Sample Expression
+
+```{r}
+ggplot(mean_summary, aes(x = Mean, y = Sample)) +
+  geom_point(color = "darkblue") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(x = "Mean Gene Expression",
+       y = ("Expression in First Sample"),
+       title = "Scatter Plot: Mean vs. First Sample Gene Expression")
+
+```
+
+### Bar Plot: Top 10 Genes with Highest Mean Expression
+
+```{r}
+top10 <- mean_summary %>% arrange(desc(Mean)) %>% head(10)
+ggplot(top10, aes(x = reorder(Genes, Mean), y = Mean)) +
+  geom_bar(stat = "identity", fill = "darkblue") +
+  labs(x = "Genes",
+       y = "Mean Expression",
+       title = "Top 10 Genes with Highest Mean Expression")
+```
+### Box Plots for the First Gene by Cancer Type
+
+```{r}
+first_gene <- as.data.frame(data[,3])
+colnames(first_gene) <- "First Gene"
+cancer_type <- as.data.frame(data[,2])
+colnames(cancer_type) <- "Cancer Type"
+first_gene <- cbind(first_gene, cancer_type)
+ggplot(first_gene, aes(x = `Cancer Type`, y = `First Gene`, fill = `Cancer Type`)) +
+  geom_boxplot() +
+  facet_wrap(~`Cancer Type`, scales = "free") +
+  labs(x = "Cancer Type",
+       y = "First Gene Expression",
+       title = "Box Plots for the First Gene by Cancer Type")
+```
+## Task1.2
+### Perform PCA
+
+```{r}
+PCA_data <- data %>% select(-c(1,2))
+PCA <- PCA_data %>% select(where(is.numeric))%>% prcomp(center = TRUE, scale = TRUE)
+
+components <- as.data.frame(PCA$x[, 1:3])
+colnames(components)[1:3] <- c("Comp1", "Comp2", "Comp3")
+components <- cbind(components, cancer_type)
+```
+
+### Scatter Plots of PCA Components
+
+```{r}
+p1 <- ggplot(components, aes(x = Comp1, y = Comp2, color = `Cancer Type`)) +
+  geom_point(size = 3) +
+  labs(title = "PCA: Component 1 vs Component 2")
+
+p2 <- ggplot(components, aes(x = Comp1, y = Comp3, color = `Cancer Type`)) +
+  geom_point(size = 3) +
+  labs(title = "PCA: Component 1 vs Component 3")
+
+p3 <- ggplot(components, aes(x = Comp2, y = Comp3, color = `Cancer Type`)) +
+  geom_point(size = 3) +
+  labs(title = "PCA: Component 2 vs Component 3")
+
+print(p1)
+print(p2)
+print(p3)
+
+```
+### Scree Plot for the First 20 Principal Components
+
+```{r}
+scree <- PCA$sdev^2
+scree <- scree/sum(scree)
+scree <- data.frame(Principal_Component = seq(1, length(scree)), Variance = scree)
+ggplot(scree[1:20,], aes(x = Principal_Component, y = Variance)) +
+  geom_bar(stat = "identity", fill = "darkblue") +
+  labs(x = "Principal Component",
+       y = "Variance",
+       title = "Scree Plot for the First 20 Principal Components")
+```
+
+# part2 : Sequence Alignment
+## Task2.1
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("Biostrings")
+
+```
+
+```{r}
+library(Biostrings)
+```
+
+## Task2.2
+### Create DNAString Objects
+
+```{r}
+seqA <- "AGCTGAACTAGCTAGCTGACTGACTGACTAGCTAGCTGACTAGCTG"
+seqB <- "AGCGAACTAGCTGACTGACGACTGACTAGCTGACTAGCTGACTAGC"
+
+dnaA <- DNAString(seqA)
+dnaB <- DNAString(seqB)
+
+```
+### Pairwise Alignment
+
+```{r}
+ BiocManager::install("pwalign")
+alignment <- pairwiseAlignment(dnaA, dnaB)
+alignment
+```
+### Alignment Pattern , Subject and Score
+
+```{r}
+pattern <- alignment@pattern
+subject <- alignment@subject
+score <- alignment@score
+
+print("Pattern:")
+print(pattern)
+print("Subject:")
+print(subject)
+print("Score:")
+print(score)
+```
+
+### Experiment with Different Parameters
+
+```{r}
+sub_mat <- nucleotideSubstitutionMatrix(match = 1, mismatch = -1, baseOnly = TRUE)
+
+alignment2 <- pairwiseAlignment(dnaA, dnaB, substitutionMatrix = sub_mat,
+                                gapOpening = 2, gapExtension = 1)
+alignment2
+```
+### Alignment2 Pattern , Subject and Score
+```{r}
+pattern <- alignment2@pattern
+subject <- alignment2@subject
+score <- alignment2@score
+
+print("Pattern:")
+print(pattern)
+print("Subject:")
+print(subject)
+print("Score:")
+print(score)
+```
+
+### preform the alignment 6 times with different parameters
+
+```{r}
+params <- list(
+  list(match = 1, mismatch = -1, gapOpening = 2, gapExtension = 1),
+  list(match = 2, mismatch = -1, gapOpening = 3, gapExtension = 1),
+  list(match = 1, mismatch = -2, gapOpening = 2, gapExtension = 2),
+  list(match = 2, mismatch = -2, gapOpening = 2, gapExtension = 2),
+  list(match = 1, mismatch = -1, gapOpening = 1, gapExtension = 0.5),
+  list(match = 2, mismatch = -1, gapOpening = 1, gapExtension = 0.5)
+)
+
+results <- list()
+for (i in seq_along(params)) {
+  par <- params[[i]]
+  sub_mat_exp <- nucleotideSubstitutionMatrix(match = par$match, mismatch = par$mismatch, baseOnly = TRUE)
+  align_exp <- pairwiseAlignment(dnaA, dnaB, substitutionMatrix = sub_mat_exp,
+                                 gapOpening = par$gapOpening, gapExtension = par$gapExtension)
+  results[[paste0("Experiment", i)]] <- align_exp
+}
+results
+```
+## Task3.2
+### Running Locally - Retrieve Sequences 
+
+```{r eval=FALSE}
+install.packages("rentrez")
+library(rentrez)
+library(Biostrings)
+```
+```{r}
+library(rentrez)
+accessions <- c("NG_050578.1", "X03562.1")
+seq_list <- lapply(accessions, function(acc) {
+  entrez_fetch(db = "nucleotide", id = acc, rettype = "fasta")
+})
+names(seq_list) <- accessions
+
+seq_list
+
+```
+### convert the sequences to DNAString objects
+```{r}
+library(Biostrings)
+
+# Define a custom getSequence function to remove headers and return the nucleotide sequence
+getSequence <- function(fasta_text) {
+  # Split the FASTA text into lines
+  lines <- strsplit(fasta_text, "\n")[[1]]
+  # Remove header lines that start with '>'
+  seq_lines <- lines[!grepl("^>", lines)]
+  # Concatenate the remaining lines into one string
+  sequence <- paste(seq_lines, collapse = "")
+  return(sequence)
+}
+
+fasta_text_1 <- seq_list[[1]]
+sequence1 <- getSequence(fasta_text_1)
+dnaA <- DNAString(sequence1)
+dnaA
+
+fasta_text_2 <- seq_list[[2]]
+sequence2 <- getSequence(fasta_text_2)
+dnaB <- DNAString(sequence2)
+dnaB
+
+
+```
+
+## Task3.3
+### Sequence Processing
+
+```{r}
+alphabetFrequency(dnaA)
+alphabetFrequency(dnaB)
+
+```
+
+### Remove Gaps and Ambiguous Bases
+
+```{r}
+# Remove gaps and ambiguous bases by using gsub on the character representation
+dnaA_cleaned <- gsub("-", "", as.character(dnaA))
+dnaA_cleaned <- gsub("N", "", dnaA_cleaned)
+
+dnaB_cleaned <- gsub("-", "", as.character(dnaB))
+dnaB_cleaned <- gsub("N", "", dnaB_cleaned)
+
+```
+
+### Make it DNAString
+```{r}
+dnaA_cleaned <- DNAString(dnaA_cleaned)
+dnaB_cleaned <- DNAString(dnaB_cleaned)
+
+#compare the length of the sequences after cleaning and before cleaning
+length(dnaA)
+length(dnaA_cleaned)
+length(dnaB)
+length(dnaB_cleaned)
+```
+
+### Pairwise Alignment
+
+```{r}
+sub_mat_blast <- nucleotideSubstitutionMatrix(match = 4, mismatch = -5, baseOnly = TRUE)
+
+alignment_local <- pwalign::pairwiseAlignment(dnaA_cleaned, dnaB_cleaned,, 
+                                     substitutionMatrix = sub_mat_blast, 
+                                     gapOpening = 4, gapExtension = 5, 
+                                     type = "local")
+alignment_local
+
+score <- score(alignment_local)
+num_matches <- nmatch(alignment_local)
+num_mismatches <- nmismatch(alignment_local)
+num_gaps <- nindel(alignment_local)
+
+print("Score:")
+print(score)
+print("Number of Matches:")
+print(num_matches)
+print("Number of Mismatches:")
+print(num_mismatches)
+print("Number of Gaps:")
+print(num_gaps)
+
+```
