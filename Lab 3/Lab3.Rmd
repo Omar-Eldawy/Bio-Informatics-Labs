@@ -1,0 +1,357 @@
+---
+title: "Lab3"
+author: "Omar Aldawy Ibrahim Aldawy 21010864"
+date: "2025-03-10"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+PLINK is a widely used open-source command-line tool designed for genome-wide association studies (GWAS) and population genetics research. It enables efficient analysis of large-scale genetic data, supporting tasks such as quality control, data manipulation, and statistical association testing. PLINK is optimized for performance, allowing researchers to handle massive datasets with millions of genetic variants and thousands of individuals. Its compatibility with various file formats and integration with other bioinformatics tools make it a valuable resource for geneticists, epidemiologists, and computational biologists. Originally developed for human genetics, PLINK is also applied in animal and plant genomics, making it a versatile tool in the field of genetics research.
+
+------------------------------------------------------------------------
+
+# Part 1: Plink Walkthrough
+
+## Task 1.1: Installation
+
+### Run this to get the directory of the plink executable after installation
+
+```{bash, eval=FALSE}
+which plink
+```
+
+### Use the path retrived (if it dummy/plink just use dummy) in this command to add the plink executable to the PATH
+
+```{bash, eval=FALSE}
+echo 'export PATH=dummy:$PATH' >> ~/.bashrc
+```
+
+### Source the bashrc file to apply the changes
+
+```{bash, eval=FALSE}
+source ~/.bashrc
+```
+
+### Run this to check if plink is in the PATH
+
+```{bash, eval=FALSE}
+echo $PATH | tr ':' '\n'
+```
+
+### Run this to check if plink is installed
+
+```{bash, eval=FALSE}
+plink --version
+```
+
+![Plink setup](plink-setup.png)
+
+### Now plink is installed and ready to use
+
+------------------------------------------------------------------------
+
+## Task 1.2: Basic Commands
+
+### File formats are .bim, .fam and .bed.
+
+### Convert the files in the current format to PED/MAP format using:
+
+```{bash, eval=FALSE}
+plink --bfile your_input_filename --recode --out your_output_filename
+```
+
+![file-conversion](file-conversion.png)
+
+### The number of variants = 67735.
+
+### The number of samples = 156 people (49 males, 107 females).
+
+------------------------------------------------------------------------
+
+### Columns of .ped file are:
+
+-   Family ID
+-   Individual ID
+-   Paternal ID (0 if unknown)
+-   Maternal ID (0 if unknown)
+-   Sex (1 = Male, 2 = Female, 0 = Unknown)
+-   Phenotype (1 = Unaffected, 2 = Affected, -9 = Missing)
+-   Genotype data (Two alleles per SNP, space-separated)
+
+![ped-header](ped-header.png)
+
+```{bash, eval=FALSE}
+head -n 5 your_output_filename.ped
+```
+
+------------------------------------------------------------------------
+
+### Columns of .map file are:
+
+-   Chromosome Number
+-   SNP ID
+-   Genetic Distance (cM) (Can be 0 if unknown)
+-   Physical Position (bp) (Base pair position in the genome)
+
+![map-header](map-header.png)
+
+```{bash, eval=FALSE}
+head -n 5 your_output_filename.map
+```
+
+------------------------------------------------------------------------
+
+### Performing the Missing Call Rate with different thresholds:
+
+```{bash, eval=FALSE}
+plink --file data_file --geno threshold_value --recode --out output_file
+```
+
+#### Threshold = 1e-1
+
+-   Number of variants removed = 0
+
+![threshold 0.1](threshold-1.png)
+
+------------------------------------------------------------------------
+
+#### Threshold = 1e-2
+
+-   Number of variants removed = 0
+
+![threshold 0.01](threshold-2.png)
+
+------------------------------------------------------------------------
+
+#### Threshold = 1e-3
+
+-   Number of variants removed = 12509
+
+![threshold 0.001](threshold-3.png)
+
+------------------------------------------------------------------------
+
+#### Threshold = 1e-4
+
+-   Number of variants removed = 12509
+
+![threshold 0.0001](threshold-4.png)
+
+------------------------------------------------------------------------
+
+#### Threshold = 1e-5
+
+-   Number of variants removed = 12509
+
+![threshold 0.00001](threshold-5.png)
+
+------------------------------------------------------------------------
+
+#### While missing call rate filtering significantly improves dataset reliability, it also reduces the total number of SNPs available for analysis. Choosing an appropriate threshold is crucial to balance quality control and retaining sufficient genetic markers for robust downstream analysis.
+
+------------------------------------------------------------------------
+
+# Part 2: Quality Control using PLINK
+
+## Running Minor Allele Frequency count on dataset to create .frq file
+
+Minor Allele Frequency (MAF) is a key metric in genetics that measures how common the less frequent allele (minor allele) is in a given population.
+
+```{bash, eval=FALSE}
+plink --file filtered_000001 --freq --out maf_output
+```
+
+## sample of .frq file
+
+```{bash, eval=FALSE}
+head maf_output.frq
+```
+
+![maf-output](maf-output.png)
+
+-   CHR:Chromosome number where the SNP is located
+-   SNP:SNP ID (rs number)
+-   A1:Minor allele (less frequent)
+-   A2:Major allele (more frequent)
+-   MAF:Minor Allele Frequency
+-   NCHROBS:Number of observed chromosomes (2 × sample size for autosomes)
+
+------------------------------------------------------------------------
+
+## Running QC on dataset using PLINK
+
+### Minor Allele Frequency (MAF) filtering
+
+Minor Allele Frequency (MAF) filtering helps remove rare variants that might introduce noise into genetic studies. By setting a threshold, you keep only common variants, ensuring robust statistical power.
+
+```{bash, eval=FALSE}
+plink --file your_output_filename --maf threshold --recode --out filtered_maf_01
+```
+
+#### MAF threshold = 0.05
+
+![maf-filter-0.05](maf-2.png)
+
+
+-   Number of variants removed = 0
+
+------------------------------------------------------------------------
+
+#### MAF threshold = 0.01
+
+![maf-filter-0.01](maf-1.png)
+
+
+-   Number of variants removed = 0
+
+------------------------------------------------------------------------
+
+#### MAF threshold = 0.3
+
+![maf-filter-0.3](maf-03.png)
+
+
+-   Number of variants removed = 48833
+
+------------------------------------------------------------------------
+
+### Missing Genotype Filter
+
+Genotype missingness filtering helps ensure high-quality genetic data by removing SNPs or individuals with too many missing genotypes.
+
+```{bash, eval=FALSE}
+plink --file your_output_filename --geno threshold --recode --out filtered_geno_10
+```
+
+#### Missing Genotype threshold = 0.05
+
+![missing-genotype-0.05](mgf-1.png)
+
+
+-   Number of variants removed = 0
+
+------------------------------------------------------------------------
+
+#### Missing Genotype threshold = 0.01
+
+![missing-genotype-0.01](mgf-2.png)
+
+
+-   Number of variants removed = 0
+
+------------------------------------------------------------------------
+
+#### Missing Genotype threshold = 0.0001
+
+![missing-genotype-0.0001](mgf-3.png)
+
+
+-   Number of variants removed = 12509
+
+------------------------------------------------------------------------
+
+### Hardy-Weinberg Equilibrium (HWE) Filter
+
+Hardy-Weinberg Equilibrium (HWE) filtering removes SNPs that show significant deviation from expected allele frequencies, which can indicate genotyping errors or population structure issues.
+
+```{bash, eval=FALSE}
+plink --file your_output_filename --hwe threshold --recode --out filtered_hwe_3
+```
+
+#### HWE threshold = 0.1
+
+![HWE-0.1](hwe-1.png)
+
+
+-   Number of variants removed = 9083
+
+------------------------------------------------------------------------
+
+#### HWE threshold = 0.01
+
+![HWE-0.01](hwe-2.png)
+
+
+-   Number of variants removed = 1346
+
+------------------------------------------------------------------------
+
+#### HWE threshold = 1e-5
+
+![HWE-0.00005](hwe-3.png)
+
+
+-   Number of variants removed = 0
+
+------------------------------------------------------------------------
+
+### Running the final version of QC using all the flags combined and reporting the final number of variants. Using the following thresholds (hwe: 0.01, maf: 0.1, geno: 0.001)
+
+![final-QC](final.png)
+
+
+-   12509 variants removed due to missing genotype data.
+-   1076 variants removed due to Hardy-Weinberg exact test.
+-   13739 variants removed due to minor allele threshold.
+-   40411 variants and 156 people pass filters and QC.
+
+------------------------------------------------------------------------
+
+## Loading the final dataset in R
+
+### Install the required packages
+
+```{r}
+install.packages("data.table")
+install.packages("tidyverse")   
+```
+
+```{r}
+library(data.table)
+library(tidyverse)
+```
+
+### Use fread to load the .ped and .map files
+
+```{r}
+filtered_ped <- fread("Plink operations/final_qc_filtered.ped", header = FALSE)
+
+filtered_map <- fread("Plink operations/final_qc_filtered.map", header = FALSE)
+
+original_ped <- fread("Plink operations/outPut.ped", header = FALSE)
+
+original_map <- fread("Plink operations/outPut.map", header = FALSE)
+```
+
+### Check the dimensions of the filtered and original datasets
+
+```{r}
+filtered_samples <- nrow(filtered_ped)
+filtered_snps <- (ncol(filtered_ped) - 6) / 2  # Each SNP has two columns (alleles)
+
+original_samples <- nrow(original_ped)
+original_snps <- (ncol(original_ped) - 6) / 2
+```
+
+### Print the results of the filtering process and compare the original and filtered datasets
+
+```{r}
+snps_removed <- original_snps - filtered_snps
+samples_removed <- original_samples - filtered_samples
+
+cat("Original SNP count:", original_snps, "\n")
+cat("Filtered SNP count:", filtered_snps, "\n")
+cat("SNPs removed:", snps_removed, "\n\n")
+
+cat("Original sample count:", original_samples, "\n")
+cat("Filtered sample count:", filtered_samples, "\n")
+cat("Samples removed:", samples_removed, "\n")
+
+```
