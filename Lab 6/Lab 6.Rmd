@@ -1,0 +1,509 @@
+---
+title: "Lab 6"
+author: "Omar Aldawy Ibrahim Aldawy"
+date: "2025-04-21"
+output:
+  pdf_document: default
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Part 1: Data Wrangling
+
+## Task 1.0: Install and load required packages
+
+```{r, message=FALSE, warning=FALSE}
+install_and_load <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
+
+install_and_load("tidyverse")
+install_and_load("ggplot2")
+install_and_load("BiocManager")
+install_and_load("clValid")
+install_and_load("scatterplot3d")
+install_and_load("e1071")
+install_and_load("gridExtra")
+install_and_load("caret")
+
+# install limma from Bioconductor
+BiocManager::install("limma")
+
+library(limma)
+```
+
+## Task 1.1: Data Acquisition
+
+-   Read the dataset CSV file into R.
+-   By this point you should have two dataframes one with expression data only and the second one with expression data + phenotypes.
+
+```{r}
+full_dataframe <- read.csv("Brain_GSE50161.csv")
+print(dim(full_dataframe))
+
+sample_ids <- full_dataframe$samples
+full_dataframe <- full_dataframe %>% select(-samples)
+rownames(full_dataframe) <- sample_ids
+
+expression.data <- full_dataframe %>% select(-type)
+```
+
+## Task 1.2: PCA Before QC
+
+-   Remove NAs by filling them with the means of their respective genes.
+-   Perform PCA on the imputed data.
+
+```{r}
+gene_means <- colMeans(expression.data, na.rm = TRUE)
+
+expr_imputed <- as.data.frame(
+  Map(function(col, m) ifelse(is.na(col), m, col),
+      expression.data,
+      gene_means)
+)
+
+pca_res <- prcomp(expr_imputed, center = TRUE, scale. = FALSE)
+pcs <- as.data.frame(pca_res$x)
+
+head(pcs)
+```
+
+## Task 1.3: PCA Before QC [Visualization]
+
+-   Visualize the PC1 vs PC2, PC1 vs PC3, and PC2 vs PC3 plots.
+-   Colors are according to the phenotype of each sample
+
+```{r, fig.width=15, fig.height=15}
+pcs_plot <- pcs %>%
+  mutate(phenotype= full_dataframe$type)
+
+p1 <- ggplot(pcs_plot, aes(PC1, PC2, color = phenotype)) +
+  geom_point() +
+  ggtitle("PC1 vs PC2 Before QC")
+
+p2 <- ggplot(pcs_plot, aes(PC1, PC3, color = phenotype)) +
+  geom_point() +
+  ggtitle("PC1 vs PC3 Before QC")
+
+p3 <- ggplot(pcs_plot, aes(PC2, PC3, color = phenotype)) +
+  geom_point() +
+  ggtitle("PC2 vs PC3 Before QC")
+
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+## Task 1.4: Data Cleaning
+
+-   Remove outliers from the data.
+-   Re-impute the data after removing outliers.
+-   Perform quantile normalization on the data (Normalizes expression intensities so that the intensities or log-ratios have similar distributions across a set of arrays).
+
+```{r}
+# Replace outliers with NA using apply
+expr_clean <- as.data.frame(
+  apply(expr_imputed, 2, function(vals) {
+    mu <- mean(vals)
+    sdv <- sd(vals)
+    outliers <- abs(vals - mu) > 3 * sdv
+    vals[outliers] <- NA
+    return(vals)
+  })
+)
+
+# Re-impute missing after outlier removal
+new_gene_means <- colMeans(expr_clean, na.rm = TRUE)
+expr_clean <- as.data.frame(
+  Map(function(col, m) ifelse(is.na(col), m, col),
+      expr_clean,
+      new_gene_means)
+)
+# Quantile normalization
+expr_norm <- normalizeBetweenArrays(as.matrix(expr_clean), method = "quantile")
+expr_norm <- as.data.frame(expr_norm)
+
+# Explanation:
+# `normalizeBetweenArrays()` adjusts the distributions of gene expression
+# values across samples to be the same; the quantile method aligns
+# empirical quantiles, ensuring comparability across arrays.
+
+```
+
+## Task 1.5: Data Inspection
+
+-   Check the distribution of the data before and after normalization.
+
+```{r}
+pca_norm <- prcomp(expr_norm, center = TRUE, scale. = FALSE)
+pcs_norm <- as.data.frame(pca_norm$x)
+head(pcs_norm)
+```
+
+-   Visualize the PC1 vs PC2, PC1 vs PC3, and PC2 vs PC3 plots after normalization.
+-   Colors are according to the phenotype of each sample
+
+```{r, fig.width=15, fig.height=15}
+pcs_norm_plot <- pcs_norm %>%
+  mutate(phenotype= full_dataframe$type)
+
+p1 <- ggplot(pcs_norm_plot, aes(PC1, PC2, color = phenotype)) +
+  geom_point() +
+  ggtitle("PC1 vs PC2 After QC")
+
+p2 <- ggplot(pcs_norm_plot, aes(PC1, PC3, color = phenotype)) +
+  geom_point() +
+  ggtitle("PC1 vs PC3 After QC")
+
+p3 <- ggplot(pcs_norm_plot, aes(PC2, PC3, color = phenotype)) +
+  geom_point() +
+  ggtitle("PC2 vs PC3 After QC")
+
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+# Part 2: Analysis
+
+## Task 2.1: Regression Analysis
+
+### Read the list of top 5000 genes from the file `top_5000.txt`.
+
+-   Select only these genes from the normalized data.
+
+```{r}
+# Encode phenotype: Tumor = 1, Normal = 0
+phenotype_binary <- ifelse(full_dataframe$type == "normal", 0, 1)
+
+# Load list of top 5000 genes
+top_genes <- read.table("top_5000.txt", header = FALSE, stringsAsFactors = FALSE)
+
+# Extract only these genes from normalized data
+genes_subset <- expr_norm[, colnames(expr_norm) %in% top_genes$V1]
+```
+
+### Perform logistic regression for each gene.
+
+-   Create a dataframe with the p-values and coefficients for each gene.
+
+```{r, warning=FALSE}
+# Perform logistic regression for each gene
+results_without_pc1 <- data.frame(Gene = character(),
+                      p_value = numeric(),
+                      coefficient = numeric())
+
+for(gene in colnames(genes_subset)) {
+  model <- glm(phenotype_binary ~ genes_subset[,gene], family = binomial)
+  results_without_pc1 <- rbind(results_without_pc1, data.frame(
+    Gene = gene,
+    p_value = summary(model)$coefficients[2,4],
+    coefficient = summary(model)$coefficients[2,1]
+  ))
+}
+```
+
+### Perform logistic regression for each gene with PC1 as a covariate.
+
+```{r, warning=FALSE}
+results_with_pc1 <- data.frame(Gene = character(),
+                      p_value = numeric(),
+                      coefficient = numeric())
+
+for(gene in colnames(genes_subset)) {
+  model <- glm(phenotype_binary ~ genes_subset[,gene] + pcs_norm$PC1, family = binomial)
+  results_with_pc1 <- rbind(results_with_pc1, data.frame(
+    Gene = gene,
+    p_value = summary(model)$coefficients[2,4],
+    coefficient = summary(model)$coefficients[2,1]
+  ))
+}
+```
+
+### Filter the results to get significant genes (p \< 0.05) and sort them by p-value.
+
+```{r}
+# Get significant genes (p < 0.05)
+significant_genes_no_pc1 <- results_without_pc1 %>% filter(p_value < 0.05) %>% arrange(p_value)
+significant_genes_pc1 <- results_with_pc1 %>% filter(p_value < 0.05) %>% arrange(p_value)
+```
+
+## Task 2.2: Visualization
+
+### Heatmap
+
+-   Create a heatmap of the top 20 significant genes (without PC1 adjustment).
+-   Create a heatmap of the top 20 significant genes (with PC1 adjustment).
+
+```{r, fig.width=12, fig.height=12}
+# Heatmap of top 20 significant genes
+top_20_genes <- significant_genes_no_pc1$Gene[1:20]
+heatmap_data <- as.matrix(genes_subset[, top_20_genes])
+
+heatmap(heatmap_data, Colv = NA, scale = "row", 
+        col = colorRampPalette(c("blue", "white", "red"))(100),
+        main = "Expression of Top 20 Significant Genes Without PC1 Adjustment")
+
+top_20_genes_pc1 <- significant_genes_pc1$Gene[1:20]
+heatmap_data_pc1 <- as.matrix(genes_subset[, top_20_genes_pc1])
+
+heatmap(heatmap_data_pc1, Colv = NA, scale = "row", 
+        col = colorRampPalette(c("blue", "white", "red"))(100),
+        main = "Expression of Top 20 Significant Genes With PC1 Adjustment")
+```
+
+### Volcano plot
+
+-   Calculate log2 fold changes for the whole genes.
+-   Add the log2 fold changes to results dataframes.
+
+```{r}
+# Calculate log2 fold changes manually
+phenotype <- full_dataframe$type
+
+logFC <- apply(expr_norm, 2, function(x) {
+  tumor_mean <- mean(x[phenotype != "normal"])
+  normal_mean <- mean(x[phenotype == "normal"])
+  log2(tumor_mean / normal_mean)
+})
+
+# Add logFC to your results dataframes
+results_without_pc1$logFC <- logFC[match(results_without_pc1$Gene, names(logFC))]
+results_with_pc1$logFC <- logFC[match(results_with_pc1$Gene, names(logFC))]
+```
+
+-   Create volcano plots for the results without and with PC1 adjustment.
+
+```{r}
+create_volcano_plot_all <- function(results_df, title) {
+  volcano_data <- results_df %>%
+    mutate(
+      neg_log_pval = -log10(p_value),
+      direction = case_when(
+        p_value >= 0.05 ~ "Non-sig",
+        logFC > 0 ~ "Up",
+        logFC <= 0 ~ "Down"
+      ),
+      significance = ifelse(p_value < 0.05, "Significant", "Non-significant"),
+      top_20 = ifelse(p_value < 0.05 & rank(p_value) <= 20, TRUE, FALSE)
+    )
+
+  ggplot(volcano_data, aes(x = logFC, y = neg_log_pval)) +
+    # Non-significant points
+    geom_point(
+      data = filter(volcano_data, significance == "Non-significant"),
+      aes(color = direction),
+      alpha = 0.3,
+      size = 2
+    ) +
+    # Significant points (but not top 20)
+    geom_point(
+      data = filter(volcano_data, significance == "Significant", !top_20),
+      aes(color = direction),
+      alpha = 0.6,
+      size = 2
+    ) +
+    # Top 20 points - always green
+    geom_point(
+      data = filter(volcano_data, top_20),
+      color = "green3",  # fixed color
+      size = 3,
+      shape = 21,        # filled circle with border
+      fill = "green3"
+    ) +
+    # Top 20 labels
+    geom_text(
+      data = filter(volcano_data, top_20),
+      aes(label = Gene),
+      color = "green4",  # darker green for text
+      vjust = 1.5,
+      hjust = 0.5,
+      size = 3,
+      show.legend = FALSE
+    ) +
+    scale_color_manual(
+      values = c("Down" = "blue", "Up" = "red", "Non-sig" = "grey50"),
+      labels = c("Downregulated", "Non-significant", "Upregulated")
+    ) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey50") +
+    labs(
+      x = "log2 Fold Change (Tumor/Normal)",
+      y = "-log10(p-value)",
+      title = title,
+      color = "Gene Expression"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",
+      plot.title = element_text(hjust = 0.5)
+    )
+}
+```
+
+-   Draw the volcano plots.
+
+```{r, fig.width=15, fig.height=15}
+# Create plots
+create_volcano_plot_all(results_without_pc1, "Volcano Plot Without PC1 Adjustment")
+create_volcano_plot_all(results_with_pc1, "Volcano Plot With PC1 Adjustment")
+```
+
+# Part 3: Annotation
+
+## Save the top 20 genes from both analyses to text files.
+
+```{r}
+# For top_20_genes (without PC3 adjustment)
+print(top_20_genes)
+
+# Remove first character from each gene name
+top_20_genes_trimmed <- sub("^.", "", top_20_genes)  # ^. matches first character
+
+write.table(top_20_genes_trimmed, 
+            file = "top20_genes.txt", 
+            quote = FALSE,      
+            row.names = FALSE,   
+            col.names = FALSE)  
+
+# For top_20_genes_pc3 (with PC3 adjustment)
+print(top_20_genes_pc1)
+
+# Remove first character from each gene name
+top_20_genes_pc1_trimmed <- sub("^.", "", top_20_genes_pc1)
+
+write.table(data.frame(Gene = top_20_genes_pc1_trimmed), 
+            file = "top20_genes_pc1.txt", 
+            quote = FALSE, 
+            row.names = FALSE, 
+            col.names = FALSE)
+```
+
+### Use david tools to convert the top 20 significant gene names to normal gene names.
+
+![Normal gene names(no PC1)](david_no_pca.png)
+
+![Normal gene names(with PC1)](david_pc1.png)
+
+## Install and load the `hgu133plus2.db` package.
+
+```{r, message=FALSE, warning=FALSE}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("hgu133plus2.db") 
+
+library(hgu133plus2.db)
+```
+
+## Map the probe IDs to gene symbols using the `mapIds` function.
+
+```{r}
+gene_symbols <- mapIds(hgu133plus2.db, 
+                      keys = top_20_genes_trimmed,
+                      column = "SYMBOL",
+                      keytype = "PROBEID")
+print(gene_symbols)
+```
+
+```{r}
+gene_symbols_pc1 <- mapIds(hgu133plus2.db, 
+                      keys = top_20_genes_pc1_trimmed,
+                      column = "SYMBOL",
+                      keytype = "PROBEID")
+print(gene_symbols_pc1)
+```
+
+## Extracting Kegg pathways annotation
+
+-   Install and load the `enrichR` package.
+-   Perform KEGG pathway enrichment analysis using the `enrichR` function.
+-   Specify the KEGG database.
+
+```{r, message=FALSE, warning=FALSE}
+install.packages("enrichR")
+library(enrichR)
+```
+
+```{r}
+dbs <- c("KEGG_2021_Human") # Specify KEGG database
+```
+
+-   Extract the KEGG results.
+-   Save the results to a CSV file.
+
+```{r}
+enriched <- enrichr(gene_symbols, dbs)
+
+# Extract KEGG results
+kegg_results <- enriched[["KEGG_2021_Human"]]
+
+# Save results
+write.csv(kegg_results, "kegg_pathways.csv", row.names = FALSE)
+print(kegg_results)
+```
+
+![NO_PC1](enrichr21.png)
+
+![NO_PC1](enrichr22.png)
+
+![NO_PC1](enrichr23.png)
+
+```{r}
+enriched_pc1 <- enrichr(gene_symbols_pc1, dbs)
+
+# Extract KEGG results
+kegg_results_pc1 <- enriched_pc1[["KEGG_2021_Human"]]
+
+# Save results
+write.csv(kegg_results_pc1, "kegg_pathways_pc3.csv", row.names = FALSE)
+print(kegg_results_pc1)
+```
+
+![PC1](enrichr11.png)
+
+![PC1](enrichr12.png)
+
+![PC1](enrichr13.png)
+
+![PC1](enrichr14.png)
+
+-   Visualize the KEGG pathway enrichment results.
+-   Filter significant pathways (p \< 0.05) and create a bar plot.
+
+```{r}
+# Filter significant pathways (p < 0.05)
+sig_pathways <- kegg_results[kegg_results$Adjusted.P.value < 0.05, ]
+
+ggplot(sig_pathways, 
+       aes(x = reorder(Term, -log10(Adjusted.P.value)), 
+              y = -log10(Adjusted.P.value))) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "KEGG Pathway Enrichment",
+       x = "Pathway",
+       y = "-log10(Adjusted P-value)") +
+  theme_minimal()
+```
+
+```{r}
+# Filter significant pathways (p < 0.05)
+sig_pathways_pc1 <- kegg_results_pc1[kegg_results_pc1$Adjusted.P.value < 0.05, ]
+ggplot(sig_pathways_pc1, 
+       aes(x = reorder(Term, -log10(Adjusted.P.value)), 
+              y = -log10(Adjusted.P.value))) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "KEGG Pathway Enrichment (PC3 Adjustment)",
+       x = "Pathway",
+       y = "-log10(Adjusted P-value)") +
+  theme_minimal()
+```
+
+## Comments on the version with PC1
+
+-   Statistically, none of the pathways were significant after adjusting for multiple testing (all adjusted p-value > 0.05).
+-   Some pathways still show strong signals, with high odds ratios and low raw p-values, suggesting they might be biologically relevant.
+-   If we’re doing exploratory analysis, it might make sense to relax the threshold a bit (looking at adjusted p-values below 0.15) to catch pathways that could still be worth investigating.

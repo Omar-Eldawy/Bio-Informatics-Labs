@@ -1,0 +1,598 @@
+---
+title: "Lab 5"
+author: "Omar Aldawy Ibrahim Aldawy 21010864"
+date: "2025-04-12"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Objective
+
+To provide students with hands-on experience in genomics data analysis techniques, including data preprocessing, Principal Component Analysis (PCA), clustering, and association analysis with phenotypes (including population substructure) using linear and logistic regression. The tasks are to be done in R and PLINK software.
+
+# Quality Control and PCA
+
+## Filter data
+
+```{bash, eval=FALSE}
+plink --bfile your_data \
+  --maf 0.08 \
+  --geno 0.001 \
+  --hwe 0.01 \
+  --make-bed \
+  --out cleaned_data
+```
+
+![filter data](filter.png)
+
+## Create ped and map files from cleaned data
+
+```{bash, eval=FALSE}
+plink --bfile cleaned_data --recode --out cleaned_data
+```
+
+![map and ped](create_map.png)
+
+## Calculate PCA (Eigen vectors and Eigen values)
+
+```{bash, eval=FALSE}
+plink --bfile cleaned_data \
+  --pca \
+  --out cleaned_data_pca
+```
+
+![PCA](pca.png)
+
+# Part 1: Identify SNPs associated with Population Structure
+
+## Task 1.1: Identify SNPs associated with genomic PCs using Linear Regression Analysis
+
+### Encode SNPs using additive approach
+
+```{bash, eval=FALSE}
+plink --bfile cleaned_data --recode A --out recoded_data
+```
+
+![Additive Encoding](encode.png)
+
+### Load required libraries
+
+```{r, message=FALSE, warning=FALSE}
+install_and_load <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
+
+install_and_load("tidyverse")
+install_and_load("scatterplot3d")
+install_and_load("caret")
+install_and_load("qqman")
+```
+
+### Read raw file and select the SNPs' columns
+
+```{r}
+# Read the .raw file
+geno <- read.table("Data/recoded_data.raw", header = TRUE, sep = "")
+
+# Isolate only the SNP columns (after the first 6 columns)
+snp_data <- geno %>% select(-(1:6))
+```
+
+### Read PCA components and select the top 3 components
+
+```{r}
+# Read the eigenvectors (PCs)
+pcs <- read.table("Data/cleaned_data_pca.eigenvec", header = FALSE, sep = "")
+
+# Assign column names
+colnames(pcs) <- c("FID", "IID", paste0("PC", 1:20))  # If PLINK gives 20 PCs
+
+# Join PCs with SNP data using individual IDs
+merged_data <- cbind(pcs[, 3:5], snp_data)  # PC1, PC2, PC3 + SNPs
+```
+
+### Run 3 linear regression sets, each set is composed of one PC as a dependent variable against all SNPs while correcting the model for the other two PCs.
+
+```{r}
+results_pc1_stats <- lapply(snp_data, function(snp) {
+  tryCatch({
+    coefs <- summary(lm(PC1 ~ snp + PC2 + PC3, data = pcs[, 3:5]))$coefficients
+    c(Beta = coefs[2, "Estimate"],
+      SE = coefs[2, "Std. Error"],
+      P_Value = coefs[2, "Pr(>|t|)"])
+  }, error = function(e) c(Beta = NA, SE = NA, P_Value = NA))
+})
+
+# Convert list to data frame
+results_pc1_df <- as.data.frame(do.call(rbind, results_pc1_stats))
+results_pc1_df$SNP <- names(results_pc1_stats)
+
+# Reorder columns
+results_pc1_df <- results_pc1_df[, c("SNP", "Beta", "SE", "P_Value")]
+```
+
+```{r}
+results_pc2_stats <- lapply(snp_data, function(snp) {
+  tryCatch({
+    coefs <- summary(lm(PC2 ~ snp + PC1 + PC3, data = pcs[, 3:5]))$coefficients
+    c(Beta = coefs[2, "Estimate"],
+      SE = coefs[2, "Std. Error"],
+      P_Value = coefs[2, "Pr(>|t|)"])
+  }, error = function(e) c(Beta = NA, SE = NA, P_Value = NA))
+})
+
+results_pc2_df <- as.data.frame(do.call(rbind, results_pc2_stats))
+results_pc2_df$SNP <- names(results_pc2_stats)
+results_pc2_df <- results_pc2_df[, c("SNP", "Beta", "SE", "P_Value")]
+
+```
+
+```{r}
+results_pc3_stats <- lapply(snp_data, function(snp) {
+  tryCatch({
+    coefs <- summary(lm(PC3 ~ snp + PC1 + PC2, data = pcs[, 3:5]))$coefficients
+    c(Beta = coefs[2, "Estimate"],
+      SE = coefs[2, "Std. Error"],
+      P_Value = coefs[2, "Pr(>|t|)"])
+  }, error = function(e) c(Beta = NA, SE = NA, P_Value = NA))
+})
+
+results_pc3_df <- as.data.frame(do.call(rbind, results_pc3_stats))
+results_pc3_df$SNP <- names(results_pc3_stats)
+results_pc3_df <- results_pc3_df[, c("SNP", "Beta", "SE", "P_Value")]
+
+```
+
+### Calculate Bonferroni-threshold and determine the significant SNPs
+
+```{r}
+bonf_threshold <- 0.05 / ncol(snp_data)
+
+# Significant SNPs
+sig_snps_pc1 <- results_pc1_df %>% filter(P_Value < bonf_threshold)
+sig_snps_pc2 <- results_pc2_df %>% filter(P_Value < bonf_threshold)
+sig_snps_pc3 <- results_pc3_df %>% filter(P_Value < bonf_threshold)
+```
+
+```{r}
+cat("Bonferroni threshold =", bonf_threshold, "\n")
+print(sig_snps_pc1)
+print(sig_snps_pc2)
+print(sig_snps_pc3)
+```
+
+## Task 2.2: Identify SNPs that associate with the population subgroups (clusters) using logistic regression
+
+### Run the k-means clustering algorithm using the first 3 PCs and plot the 3D scatterplot.
+
+```{r}
+# Set seed and cluster
+set.seed(42)
+kmeans_res <- kmeans(merged_data[, c("PC1", "PC2", "PC3")],
+                     centers = 3,
+                     nstart = 25,
+                     iter.max = 1000)
+
+# 3D plot
+scatterplot3d(merged_data$PC1,
+              merged_data$PC2,
+              merged_data$PC3,
+              color = kmeans_res$cluster,
+              xlab = "PC1",
+              ylab = "PC2",
+              zlab = "PC3",
+              pch = 16)
+```
+
+### Perform one-hot encoding for the cluster labels obtained from the k means.
+
+```{r}
+# One-hot encode cluster labels
+merged_data$cluster <- as.factor(kmeans_res$cluster)
+dummies <- dummyVars(~ cluster, data = merged_data)
+cluster_encoded <- predict(dummies, newdata = merged_data)
+merged_cluster <- cbind(merged_data, cluster_encoded)
+```
+
+### Perform logistic regression as each set is composed of cluster encoding against all SNPs.
+
+```{r, warning=FALSE}
+# Logistic regression for cluster 1 (cluster.1 encoded as dependent variable)
+results_cluster1_stats <- lapply(snp_data, function(snp) {
+  tryCatch({
+    coefs <- summary(glm(cluster_encoded[, 1] ~ snp, family = binomial))$coefficients
+    c(Beta = coefs[2, "Estimate"],
+      SE = coefs[2, "Std. Error"],
+      P_Value = coefs[2, "Pr(>|z|)"])
+  }, error = function(e) c(Beta = NA, SE = NA, P_Value = NA))
+})
+
+results_cluster1_df <- as.data.frame(do.call(rbind, results_cluster1_stats))
+results_cluster1_df$SNP <- names(results_cluster1_stats)
+results_cluster1_df <- results_cluster1_df[, c("SNP", "Beta", "SE", "P_Value")]
+
+```
+
+```{r, warning=FALSE}
+# Logistic regression for cluster 2 (cluster.2 encoded as dependent variable)
+results_cluster2_stats <- lapply(snp_data, function(snp) {
+  tryCatch({
+    coefs <- summary(glm(cluster_encoded[, 2] ~ snp, family = binomial))$coefficients
+    c(Beta = coefs[2, "Estimate"],
+      SE = coefs[2, "Std. Error"],
+      P_Value = coefs[2, "Pr(>|z|)"])
+  }, error = function(e) c(Beta = NA, SE = NA, P_Value = NA))
+})
+
+results_cluster2_df <- as.data.frame(do.call(rbind, results_cluster2_stats))
+results_cluster2_df$SNP <- names(results_cluster2_stats)
+results_cluster2_df <- results_cluster2_df[, c("SNP", "Beta", "SE", "P_Value")]
+
+```
+
+```{r, warning=FALSE}
+# Logistic regression for cluster 3 (cluster.3 encoded as dependent variable)
+results_cluster3_stats <- lapply(snp_data, function(snp) {
+  tryCatch({
+    coefs <- summary(glm(cluster_encoded[, 3] ~ snp, family = binomial))$coefficients
+    c(Beta = coefs[2, "Estimate"],
+      SE = coefs[2, "Std. Error"],
+      P_Value = coefs[2, "Pr(>|z|)"])
+  }, error = function(e) c(Beta = NA, SE = NA, P_Value = NA))
+})
+
+results_cluster3_df <- as.data.frame(do.call(rbind, results_cluster3_stats))
+results_cluster3_df$SNP <- names(results_cluster3_stats)
+results_cluster3_df <- results_cluster3_df[, c("SNP", "Beta", "SE", "P_Value")]
+```
+
+### Identify significant SNPs that are associated with each of the 3 clusters using a Bonferroni threshold
+
+```{r}
+sig_snps_cluster1 <- results_cluster1_df %>% filter(P_Value < bonf_threshold)
+sig_snps_cluster2 <- results_cluster2_df %>% filter(P_Value < bonf_threshold)
+sig_snps_cluster3 <- results_cluster3_df %>% filter(P_Value < bonf_threshold)
+```
+
+```{r}
+print(sig_snps_cluster1)
+print(sig_snps_cluster2)
+print(sig_snps_cluster3)
+```
+
+## Task 2: Manhattan, Annotation, and Discussion
+
+### Load map file of the cleaned data to use it for the plot
+
+```{r}
+map_data <- read.table("Data/cleaned_data.map", header = FALSE)
+colnames(map_data) <- c("CHR", "SNP", "GD", "BP")
+```
+
+### Use the values we got before from the analysis
+
+```{r}
+results_linear_pc1_df <- data.frame(SNP = rownames(results_pc1_df),
+                                P = results_pc1_df[,"P_Value"])
+
+results_linear_pc2_df <- data.frame(SNP = rownames(results_pc2_df),
+                                P = results_pc2_df[,"P_Value"])
+
+results_linear_pc3_df <- data.frame(SNP = rownames(results_pc3_df),
+                                P = results_pc3_df[,"P_Value"])
+
+
+results_logistic_cluster1_df <- data.frame(SNP = rownames(results_cluster1_df),
+                                        P = results_cluster1_df[,"P_Value"])
+
+results_logistic_cluster2_df <- data.frame(SNP = rownames(results_cluster2_df),
+                                        P = results_cluster2_df[,"P_Value"])
+
+results_logistic_cluster3_df <- data.frame(SNP = rownames(results_cluster3_df),
+                                        P = results_cluster3_df[,"P_Value"])
+```
+
+### Editing SNPs column as we need it to merge with the table from map file
+
+```{r}
+results_linear_pc1_df$SNP <- substr(results_linear_pc1_df$SNP, 1,
+                                    nchar(results_linear_pc1_df$SNP) - 2)
+
+results_linear_pc2_df$SNP <- substr(results_linear_pc2_df$SNP, 1,
+                                    nchar(results_linear_pc2_df$SNP) - 2)
+
+results_linear_pc3_df$SNP <- substr(results_linear_pc3_df$SNP, 1,
+                                    nchar(results_linear_pc3_df$SNP) - 2)
+
+
+results_logistic_cluster1_df$SNP <- substr(results_logistic_cluster1_df$SNP, 1,
+                                    nchar(results_logistic_cluster1_df$SNP) - 2)
+
+results_logistic_cluster2_df$SNP <- substr(results_logistic_cluster2_df$SNP, 1,
+                                    nchar(results_logistic_cluster2_df$SNP) - 2)
+
+results_logistic_cluster3_df$SNP <- substr(results_logistic_cluster3_df$SNP, 1,
+                                    nchar(results_logistic_cluster3_df$SNP) - 2)
+```
+
+### Merging the two tables to make the data ready for plotting
+
+```{r}
+manhattan_data_pc1 <- merge(map_data, results_linear_pc1_df, by = "SNP")
+manhattan_data_pc2 <- merge(map_data, results_linear_pc2_df, by = "SNP")
+manhattan_data_pc3 <- merge(map_data, results_linear_pc3_df, by = "SNP")
+
+manhattan_data_cluster1 <- merge(map_data, results_logistic_cluster1_df, by = "SNP")
+manhattan_data_cluster2 <- merge(map_data, results_logistic_cluster2_df, by = "SNP")
+manhattan_data_cluster3 <- merge(map_data, results_logistic_cluster3_df, by = "SNP")
+```
+
+### Function to plot Manhattan-Plot
+
+```{r}
+draw_manhattan_plot <- function(data, title) {
+  #data <- data %>% filter(CHR < 23)
+  manhattan(data,
+            main = title,
+            col = c("skyblue", "orange"),
+            suggestiveline = FALSE,
+            genomewideline = -log10(bonf_threshold))
+}
+```
+
+### Drawing Manhattan-Plots for the p-values we got from each analysis we had made
+
+```{r}
+draw_manhattan_plot(manhattan_data_pc1, "Manhattan Plot for PC1")
+draw_manhattan_plot(manhattan_data_pc2, "Manhattan Plot for PC2")
+draw_manhattan_plot(manhattan_data_pc3, "Manhattan Plot for PC3")
+
+draw_manhattan_plot(manhattan_data_cluster1, "Manhattan Plot for Cluster 1")
+draw_manhattan_plot(manhattan_data_cluster2, "Manhattan Plot for Cluster 2")
+draw_manhattan_plot(manhattan_data_cluster3, "Manhattan Plot for Cluster 3")
+```
+
+### Get the top 10 significant SNPs
+
+```{r}
+top10 <- results_pc1_df[order(results_pc1_df[,"P_Value"]), ][1:10, ]
+top10 <- data.frame(top10)
+top10$SNP <- substr(top10$SNP, 1, nchar(top10$SNP) - 2)
+# Merge the positional information
+annotated_top10 <- merge(top10, map_data, by.x = "SNP", by.y = "SNP")
+annotated_top10 <- annotated_top10[order(annotated_top10$P_Value), ]
+```
+
+### Use dbSNP from NCBI website to check the information on the 10 most significant SNPs from the linear regression and PC1
+
+```{r}
+gene_names <- c("MSANTD2", "MFN1", "Introne", "DACH1", "DCC", "Introne",
+                "Introne", "CAPN14", "MSI2", "LOC124903496")
+freq <- c(
+"C=0.255752/4958 (ALFA)
+C=0.171667/103 (NorthernSweden)
+C=0.175926/38 (Qatari)
+C=0.200401/200 (GoNL)
+C=0.200647/744 (TWINSUK)
+C=0.201349/776 (ALSPAC)
+C=0.202009/905 (Estonian)
+C=0.202812/163393 (GnomAD_exomes)
+C=0.208333/45 (Vietnamese)
+C=0.275/11 (GENOME_DK)
+C=0.277317/2005 (Korea4K)
+C=0.282253/827 (KOREAN)
+C=0.290393/532 (Korea1K)
+C=0.327309/48731 (GnomAD_genomes)
+C=0.334913/25935 (TOMMO)
+C=0.345248/1729 (1000Genomes)
+C=0.345313/91401 (TOPMED)
+C=0.352124/2255 (1000Genomes_30X)
+G=0.355856/79 (SGDP_PRJ)
+C=0.40625/767 (HapMap)
+G=0.416667/5 (Siberian)",
+
+"T=0.019987/5600 (ALFA)
+T=0.001563/7 (Estonian)
+T=0.002004/2 (GoNL)
+T=0.002967/11 (TWINSUK)
+T=0.003633/14 (ALSPAC)
+T=0.017572/11 (Chileans)
+T=0.115741/25 (Qatari)
+T=0.128333/19125 (GnomAD_genomes)
+T=0.142469/37710 (TOPMED)
+T=0.14976/750 (1000Genomes)
+T=0.156777/1004 (1000Genomes_30X)
+T=0.206066/16217 (PAGE_STUDY)
+C=0.28125/18 (SGDP_PRJ)
+T=0.317708/366 (HapMap)", 
+
+"A=0.066912/3077 (ALFA)
+A=0./0 (PRJEB36033)
+A=0.000446/2 (Estonian)
+A=0.001002/1 (GoNL)
+A=0.00204/158 (TOMMO)
+A=0.002427/9 (TWINSUK)
+A=0.003114/12 (ALSPAC)
+A=0.004147/30 (Korea4K)
+A=0.005818/17 (KOREAN)
+A=0.00655/12 (Korea1K)
+A=0.023962/15 (Chileans)
+A=0.115741/25 (Qatari)
+A=0.132941/19830 (GnomAD_genomes)
+A=0.149361/748 (1000Genomes)
+A=0.150652/39876 (TOPMED)
+A=0.158807/1017 (1000Genomes_30X)
+A=0.247235/447 (HapMap)
+G=0.297297/22 (SGDP_PRJ)",
+
+"C=0.156855/2963 (ALFA)
+C=0.024107/108 (Estonian)
+C=0.028333/17 (NorthernSweden)
+C=0.039105/145 (TWINSUK)
+C=0.03944/152 (ALSPAC)
+C=0.194444/42 (Qatari)
+C=0.25609/38120 (GnomAD_genomes)
+C=0.258646/20013 (TOMMO)
+C=0.262637/769 (KOREAN)
+C=0.265833/1914 (Korea4K)
+C=0.273585/58 (Vietnamese)
+C=0.286868/75931 (TOPMED)
+C=0.322684/1616 (1000Genomes)
+C=0.335728/2150 (1000Genomes_30X)
+G=0.347368/66 (SGDP_PRJ)
+C=0.411111/777 (HapMap)
+G=0.5/9 (Siberian)",
+
+"T=0.061196/1156 (ALFA)
+T=0./0 (GENOME_DK)
+C=0./0 (KOREAN)
+T=0./0 (Korea1K)
+T=0./0 (Korea4K)
+T=0./0 (NorthernSweden)
+T=0./0 (Siberian)
+T=0./0 (Vietnamese)
+T=0.000039/3 (TOMMO)
+T=0.000778/3 (ALSPAC)
+T=0.001002/1 (GoNL)
+T=0.001618/6 (TWINSUK)
+T=0.027778/15 (SGDP_PRJ)
+A=0.046816/25 (MGP)
+T=0.097222/21 (Qatari)
+T=0.10416/15525 (GnomAD_genomes)
+T=0.110423/553 (1000Genomes)
+T=0.112586/721 (1000Genomes_30X)
+T=0.118187/31283 (TOPMED)
+T=0.272727/348 (HapMap)",
+
+"C=0.091795/1734 (ALFA)
+C=0.008091/30 (TWINSUK)
+C=0.010638/41 (ALSPAC)
+C=0.011079/858 (TOMMO)
+C=0.011667/7 (NorthernSweden)
+C=0.014028/14 (GoNL)
+C=0.015402/69 (Estonian)
+C=0.017454/51 (KOREAN)
+C=0.019635/142 (Korea4K)
+C=0.019651/36 (Korea1K)
+C=0.117925/25 (Vietnamese)
+C=0.134259/29 (Qatari)
+C=0.153379/22855 (GnomAD_genomes)
+C=0.166674/44117 (TOPMED)
+C=0.167732/840 (1000Genomes)
+C=0.173641/1112 (1000Genomes_30X)
+C=0.207632/370 (HapMap)
+G=0.358696/33 (SGDP_PRJ)
+G=0.5/1 (Siberian)",
+
+"C=0.158421/33521 (ALFA)
+C=0.000684/2 (KOREAN)
+C=0.106481/23 (Qatari)
+C=0.108696/10 (PRJEB36033)
+C=0.112764/235 (HGDP_Stanford)
+C=0.135783/85 (Chileans)
+C=0.156473/701 (Estonian)
+C=0.160093/617 (ALSPAC)
+C=0.161003/597 (TWINSUK)
+C=0.16893/846 (1000Genomes)
+C=0.173333/104 (NorthernSweden)
+C=0.175/7 (GENOME_DK)
+C=0.175828/1126 (1000Genomes_30X)
+C=0.178357/178 (GoNL)
+C=0.203465/30355 (GnomAD_genomes)
+C=0.212369/56212 (TOPMED)
+C=0.212963/368 (HapMap)
+T=0.433962/46 (SGDP_PRJ)
+T=0.5/5 (Siberian)",
+
+"T=0.058562/1846 (ALFA)
+T=0.010491/47 (Estonian)
+T=0.014028/14 (GoNL)
+T=0.01453/56 (ALSPAC)
+T=0.015642/58 (TWINSUK)
+T=0.025/1 (GENOME_DK)
+T=0.031667/19 (NorthernSweden)
+T=0.036741/23 (Chileans)
+T=0.119623/17820 (GnomAD_genomes)
+T=0.125/27 (Qatari)
+T=0.131641/34844 (TOPMED)
+T=0.180911/906 (1000Genomes)
+T=0.2004/15515 (TOMMO)
+T=0.203042/15979 (PAGE_STUDY)
+T=0.203057/372 (Korea1K)
+T=0.206167/1491 (Korea4K)
+T=0.219113/642 (KOREAN)
+T=0.222222/48 (Vietnamese)
+T=0.2463/466 (HapMap)
+C=0.333333/2 (Siberian)
+C=0.353448/41 (SGDP_PRJ)",
+
+"G=0.060874/9517 (ALFA)
+G=0.014927/1156 (TOMMO)
+G=0.020534/60 (KOREAN)
+G=0.025/1 (GENOME_DK)
+G=0.026201/48 (Korea1K)
+G=0.029721/215 (Korea4K)
+G=0.03125/2 (PRJEB36033)
+G=0.031667/19 (NorthernSweden)
+G=0.037074/37 (GoNL)
+G=0.039914/148 (TWINSUK)
+G=0.040477/156 (ALSPAC)
+G=0.047923/30 (Chileans)
+G=0.070089/314 (Estonian)
+G=0.087963/19 (Qatari)
+G=0.098369/205 (HGDP_Stanford)
+G=0.146694/21834 (GnomAD_genomes)
+G=0.153754/770 (1000Genomes)
+G=0.157402/1008 (1000Genomes_30X)
+G=0.15896/42075 (TOPMED)
+G=0.222516/421 (HapMap)
+A=0.319149/30 (SGDP_PRJ)
+A=0.5/5 (Siberian)",
+
+"A=0.273214/9704 (ALFA)
+A=0.120982/542 (Estonian)
+A=0.125/5 (GENOME_DK)
+A=0.129393/81 (Chileans)
+A=0.147295/147 (GoNL)
+A=0.151012/582 (ALSPAC)
+A=0.152373/565 (TWINSUK)
+A=0.196667/118 (NorthernSweden)
+A=0.242043/1749 (Korea4K)
+A=0.244541/448 (Korea1K)
+A=0.248802/727 (KOREAN)
+A=0.277778/60 (Qatari)
+A=0.278136/21540 (TOMMO)
+A=0.296296/64 (Vietnamese)
+G=0.302419/75 (SGDP_PRJ)
+A=0.338911/50497 (GnomAD_genomes)
+A=0.354978/93959 (TOPMED)
+A=0.404553/2026 (1000Genomes)
+A=0.410369/2628 (1000Genomes_30X)
+G=0.444444/8 (Siberian)
+A=0.457266/35985 (PAGE_STUDY)
+A=0.487831/922 (HapMap)")
+
+max_freq <- c(0.416667, 0.317708, 0.297297, 0.5, 0.272727, 0.5, 0.5,
+              0.353448, 0.5, 0.120982)
+min_freq <- c(0.171667, 0.001563, 0., 0.024107,  0., 0.008091, 0.000684,
+              0.010491, 0.014927, 0.487831)
+```
+
+### Finally our final table
+
+```{r}
+annotated_top10$Genes <- gene_names
+annotated_top10$Freq <- freq
+annotated_top10$Max_Freq <- max_freq
+annotated_top10$Min_Freq <- min_freq
+
+print(annotated_top10)
+```

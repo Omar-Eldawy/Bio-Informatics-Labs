@@ -1,0 +1,259 @@
+---
+title: "Lab 4"
+author: "Omar Aldawy Ibrahim Aldawy 21010864"
+date: "2025-03-18"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Part 1: Principal Component Analysis Using PLINK
+
+## Converting files to Ped and Map format
+
+```{bash, eval=FALSE}
+plink --bfile your_input_filename --recode --out your_output_filename
+```
+
+![creating ped and map files](file-conversion.png)
+
+## Running Quality Control with thresholds {hwe: 0.01, maf:0.1, geno: 0.001}
+
+```{bash, eval=FALSE}
+plink --file your_dataset --hwe 0.01 --maf 0.1 --geno 0.001 --recode --out qc_filtered
+```
+
+![filter data](QC.png)
+
+-   12509 variants removed due to missing genotype data (--geno).
+-   1076 variants removed due to Hardy-Weinberg exact test (--hwe).
+-   13739 variants removed due to minor allele threshold(s) (--maf).
+-   Total variants removed = 27324.
+
+## Running PCA analysis
+
+```{bash, eval=FALSE}
+plink --file qc_filtered --pca --out pca_results
+```
+
+![Principle Component Analysis](pca.png)
+
+## Loading the PCA results into R.
+
+```{r}
+# Load PCA results into R
+pca_data <- read.table("mmc2/pca_results.eigenvec", header = FALSE)
+
+# Rename columns
+colnames(pca_data) <- c("FID", "IID", paste0("PC", 1:20))  # Adjust to include the first 20 PCs
+
+# View the first few rows
+head(pca_data)
+```
+
+## Create 2D scatter plots comparing PC1 vs PC2, PC1 vs PC3, and PC2 vs PC3.
+
+```{r}
+# Load required package
+library(ggplot2)
+
+# PC1 vs PC2
+ggplot(pca_data, aes(x = PC1, y = PC2)) +
+  geom_point(alpha = 0.5, color = "blue") +
+  labs(title = "PCA: PC1 vs PC2", x = "PC1", y = "PC2") +
+  theme_minimal()
+
+# PC1 vs PC3
+ggplot(pca_data, aes(x = PC1, y = PC3)) +
+  geom_point(alpha = 0.5, color = "red") +
+  labs(title = "PCA: PC1 vs PC3", x = "PC1", y = "PC3") +
+  theme_minimal()
+
+# PC2 vs PC3
+ggplot(pca_data, aes(x = PC2, y = PC3)) +
+  geom_point(alpha = 0.5, color = "green") +
+  labs(title = "PCA: PC2 vs PC3", x = "PC2", y = "PC3") +
+  theme_minimal()
+```
+
+## Creating a scree plot for the first 20 components.
+
+```{r}
+# Load eigenvalues
+eigenvalues <- read.table("mmc2/pca_results.eigenval", header = FALSE)
+
+# Create a data frame with PC index and variance explained
+scree_data <- data.frame(
+  PC = 1:20,
+  Variance = eigenvalues$V1[1:20] / sum(eigenvalues$V1) * 100  # Convert to percentage
+)
+
+# Plot scree plot
+ggplot(scree_data, aes(x = PC, y = Variance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_line(aes(group = 1), color = "red", linewidth = 1) +
+  labs(title = "Scree Plot", x = "Principal Component", y = "Variance Explained (%)") +
+  theme_minimal()
+```
+
+-   Choosing first 5 components is enough as they explain the most variance.
+
+## Creating a 3D plot of the first three principal components.
+
+```{r}
+# Install scatterplot3d package if not installed
+if (!require("scatterplot3d")) install.packages("scatterplot3d", dependencies = TRUE)
+
+# Load the package
+library(scatterplot3d)
+
+# Create 3D scatter plot
+scatterplot3d(pca_data$PC1, pca_data$PC2, pca_data$PC3, 
+              color = "blue", pch = 19, 
+              main = "3D PCA Plot",
+              xlab = "PC1", ylab = "PC2", zlab = "PC3")
+```
+
+# Part 2: Clustering in R
+
+## Choosing the first three principal components: PC1, PC2, PC3
+
+```{r}
+# Select only the first three principal components
+pca_reduced <- pca_data[, c("PC1", "PC2", "PC3")]
+```
+
+## Use k-means clustering with different numbers of clusters.
+
+```{r}
+# Set seed for reproducibility
+set.seed(42)
+
+# Try different numbers of clusters
+k_values <- c(2, 3, 4, 5, 7, 9)
+
+# Loop through different k values
+for (k in k_values) {
+  # Perform k-means clustering
+  kmeans_result <- kmeans(pca_reduced, centers = k, nstart = 25)
+  
+  # Add cluster labels to the dataset
+  pca_reduced$Cluster <- as.factor(kmeans_result$cluster)
+  
+  # 3D visualization
+  scatterplot3d(pca_reduced$PC1, pca_reduced$PC2, pca_reduced$PC3, 
+                color = as.numeric(pca_reduced$Cluster), pch = 19,
+                main = paste("3D PCA Clustering (k =", k, ")"),
+                xlab = "PC1", ylab = "PC2", zlab = "PC3")
+  
+  # Add legend
+  legend("topright", legend = levels(pca_reduced$Cluster), 
+         col = 1:k, pch = 19, title = "Clusters")
+}
+```
+
+## Determine the optimality of the number of clusters using Dunn’s index.
+
+```{r}
+# Load required libraries
+if (!require("clValid")) install.packages("clValid", dependencies = TRUE)
+if (!require("cluster")) install.packages("cluster", dependencies = TRUE)
+library(clValid)
+library(cluster)
+```
+
+```{r}
+# Select only the first three principal components
+pca_reduced <- pca_data[, c("PC1", "PC2", "PC3")]
+
+# Define range of k values to test
+k_values <- 2:10  # Try from k=2 to k=10
+dunn_index_values <- numeric(length(k_values))  # Store Dunn’s index for each k
+
+# Loop through different k values
+for (i in seq_along(k_values)) {
+  k <- k_values[i]
+  
+  # Perform k-means clustering
+  kmeans_result <- kmeans(pca_reduced, centers = k, nstart = 25)
+  
+  # Compute Dunn’s index
+  dunn_index_values[i] <- dunn(dist(pca_reduced), kmeans_result$cluster)
+}
+```
+
+```{r}
+# Create a data frame for plotting
+dunn_data <- data.frame(k = k_values, Dunn_Index = dunn_index_values)
+
+# Plot Dunn's Index vs. Number of Clusters
+ggplot(dunn_data, aes(x = k, y = Dunn_Index)) +
+  geom_line(color = "blue", linewidth = 1) +
+  geom_point(color = "red", size = 2) +
+  labs(title = "Dunn’s Index vs. Number of Clusters",
+       x = "Number of Clusters (k)", y = "Dunn’s Index") +
+  theme_minimal()
+```
+
+## Perform k-means clustering with the optimal number of clusters.
+
+```{r}
+set.seed(42)
+
+# Perform k-means clustering with the optimal number of clusters
+kmeans_result <- kmeans(pca_reduced, centers = 5, nstart = 25)
+  
+# Add cluster labels to the dataset
+pca_reduced$Cluster <- as.factor(kmeans_result$cluster)
+  
+# 3D visualization
+scatterplot3d(pca_reduced$PC1, pca_reduced$PC2, pca_reduced$PC3, 
+              color = as.numeric(pca_reduced$Cluster), pch = 19,
+              main = paste("3D PCA Clustering (k =", 5, ")"),
+              xlab = "PC1", ylab = "PC2", zlab = "PC3")
+
+# Add legend
+legend("topright", legend = levels(pca_reduced$Cluster), 
+       col = 1:5, pch = 19, title = "Clusters")
+
+```
+
+## Visualizing the clusters corresponding to the subpopulations produced from each clustering on the PCA plots.
+
+```{r}
+# PC1 vs PC2 with Clusters
+ggplot(pca_reduced, aes(x=PC1, y=PC2, color=Cluster)) +
+  geom_point() + theme_minimal() +
+  labs(title="PC1 vs PC2 with Clusters", x="PC1", y="PC2")
+
+# PC1 vs PC3 with Clusters
+ggplot(pca_reduced, aes(x=PC1, y=PC3, color=Cluster)) +
+  geom_point() + theme_minimal() +
+  labs(title="PC1 vs PC3 with Clusters", x="PC1", y="PC3")
+
+# PC2 vs PC3 with Clusters
+ggplot(pca_reduced, aes(x=PC2, y=PC3, color=Cluster)) +
+  geom_point() + theme_minimal() +
+  labs(title="PC2 vs PC3 with Clusters", x="PC2", y="PC3")
+```
+
+## Creating a side-by-side comparison of the clusters formed by k-means.
+
+```{r}
+library(gridExtra)
+
+plot1 <- ggplot(pca_reduced, aes(x=PC1, y=PC2, color=Cluster)) +
+  geom_point() + theme_minimal() + labs(title="PC1 vs PC2")
+
+plot2 <- ggplot(pca_reduced, aes(x=PC1, y=PC3, color=Cluster)) +
+  geom_point() + theme_minimal() + labs(title="PC1 vs PC3")
+
+plot3 <- ggplot(pca_reduced, aes(x=PC2, y=PC3, color=Cluster)) +
+  geom_point() + theme_minimal() + labs(title="PC2 vs PC3")
+
+grid.arrange(plot1, plot2, plot3, ncol=3)
+```
