@@ -9,3 +9,45 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r}
+# Install required packages if not already installed
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install(c("SNPRelate", "GENESIS"))
+
+if(!require("SNPRelate", quietly = TRUE))
+    install.packages("SNPRelate")
+
+if(!require("GENESIS", quietly = TRUE))
+    install.packages("GENESIS")
+```
+
+# Task 1 : Compute Kinship using SNPRelate and GENESIS
+
+```{r}
+# Load required libraries
+library(SNPRelate)
+library(GENESIS)
+
+# Convert PLINK format to GDS format
+snpgdsPED2GDS("Dataset/input.ped", "Dataset/input.map", "Dataset/genotype.gds")
+
+# Open the GDS file
+genofile <- snpgdsOpen("Dataset/genotype.gds")
+
+# Calculate kinship using MLE method
+ibd <- snpgdsIBDMLE(genofile, 
+                        num.thread = 6,  
+                        autosome.only = FALSE,
+                        kinship = TRUE)  
+
+kinship <- ibd$kinship
+rownames(kinship) <- colnames(kinship) <- ibd$sample.id
+
+# Close the GDS file
+snpgdsClose(genofile)
+
+# Count individuals with kinship > 0.1
+high_kinship <- (sum(kinship > 0.1, na.rm = TRUE) - 156) / 2  
+cat("Number of individuals with kinship > 0.1:", high_kinship, "\n")
+```
