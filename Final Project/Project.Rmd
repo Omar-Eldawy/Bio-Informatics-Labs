@@ -94,7 +94,6 @@ scan_annot <- ScanAnnotationDataFrame(scan_annot_df)
 genoFile <- "Dataset/genotype.gds"
 gds <- GdsGenotypeReader(genoFile)
 genoData <- GenotypeData(gds, scanAnnot = scan_annot)
-genoIterator <- GenotypeBlockIterator(genoData)
 ```
 
 ```{r}
@@ -113,6 +112,7 @@ for (meta in meta.names) {
     verbose = TRUE
   )
   
+  genoIterator <- GenotypeBlockIterator(genoData)
   assoc <- assocTestSingle(
     gdsobj = genoIterator,
     null.model = null.model,
@@ -130,14 +130,20 @@ dim(results$Metabolite5)
 ```
 
 ```{r}
-seqClose(gds)
+close(gds)
 ```
 
 ```{r}
 all_results <- bind_rows(results)  
-significant_results <- filter(all_results, PVE < 0.0001)
+significant_results <- filter(all_results, Score.pval < 0.0001)
 dim(significant_results)
 
 write.xlsx(signif_results, file = "Dataset/Significant_results.xlsx", rowNames = FALSE)
+write.xlsx(all_results, file = "Dataset/All_results.xlsx", rowNames = FALSE)
 ```
+
+```{r}
+
+```
+
 
