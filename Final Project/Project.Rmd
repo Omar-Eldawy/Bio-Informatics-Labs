@@ -9,17 +9,24 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 # Install required packages if not already installed
 if (!require("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
-BiocManager::install(c("SNPRelate", "GENESIS"))
+
+BiocManager::install(c("SNPRelate", "GENESIS", "qqman", "GeneNet", "xlsx", "GWASTools", "SeqVarTools", "SeqArray"))
 
 if(!require("SNPRelate", quietly = TRUE))
     install.packages("SNPRelate")
 
 if(!require("GENESIS", quietly = TRUE))
     install.packages("GENESIS")
+
+if(!require("dplyr", quietly = TRUE))
+    install.packages("dplyr")
+
+if(!require("openxlsx", quietly = TRUE))
+    install.packages("openxlsx")
 ```
 
 # Task 1 : Compute Kinship using SNPRelate and GENESIS
@@ -28,7 +35,14 @@ if(!require("GENESIS", quietly = TRUE))
 # Load required libraries
 library(SNPRelate)
 library(GENESIS)
+library(GWASTools)
+library(SeqVarTools)
+library(SeqArray)
+library(dplyr)
+library(openxlsx)
+```
 
+```{r}
 # Convert PLINK format to GDS format
 snpgdsPED2GDS("Dataset/input.ped", "Dataset/input.map", "Dataset/genotype.gds")
 
@@ -48,6 +62,82 @@ rownames(kinship) <- colnames(kinship) <- ibd$sample.id
 snpgdsClose(genofile)
 
 # Count individuals with kinship > 0.1
-high_kinship <- (sum(kinship > 0.1, na.rm = TRUE) - 156) / 2  
+high_kinship <- (sum(kinship > 0.1, na.rm = TRUE) - 156) / 2.0  
 cat("Number of individuals with kinship > 0.1:", high_kinship, "\n")
 ```
+
+# Task 2: Compute mQTLs with Mixed Models
+```{r}
+# Load PCA data
+pca_data <- read.table("Dataset/Dataset of 156 Qataris/pca_results.eigenvec", header = FALSE)
+colnames(pca_data) <- c("FID", "IID", paste0("PC", 1:20))
+rownames(pca_data) <- pca_data$IID
+pcs <- pca_data[, c("PC1", "PC2", "PC3")]
+
+# Load metabolite data
+metabolites <- read.csv("Dataset/qatari_metabolites_2025.csv", row.names = 1)
+
+# Merge PCA with metabolite data
+all.data <- as.data.frame(cbind(pcs, metabolites))
+meta.names <- colnames(metabolites)
+
+# Sample IDs
+scan_annot_df <- data.frame(
+  scanID = rownames(metabolites),
+  stringsAsFactors = FALSE
+)
+rownames(scan_annot_df) <- scan_annot_df$scanID
+scan_annot <- ScanAnnotationDataFrame(scan_annot_df)
+```
+
+```{r}
+genoFile <- "Dataset/genotype.gds"
+gds <- GdsGenotypeReader(genoFile)
+genoData <- GenotypeData(gds, scanAnnot = scan_annot)
+genoIterator <- GenotypeBlockIterator(genoData)
+```
+
+```{r}
+results <- list()
+
+for (meta in meta.names) {
+  df <- all.data[, c("PC1", "PC2", "PC3", meta)]
+  colnames(df)[4] <- "trait"
+  
+  null.model <- fitNullModel(
+    x = df,
+    outcome = "trait",
+    covars = c("PC1", "PC2", "PC3"),
+    cov.mat = kinship,
+    family = "gaussian",
+    verbose = TRUE
+  )
+  
+  assoc <- assocTestSingle(
+    gdsobj = genoIterator,
+    null.model = null.model,
+    test = "Score",
+    verbose = TRUE
+  )
+  
+  assoc$metabolite <- meta
+  results[[meta]] <- assoc
+}
+
+head(results$Metabolite5)
+
+dim(results$Metabolite5)
+```
+
+```{r}
+seqClose(gds)
+```
+
+```{r}
+all_results <- bind_rows(results)  
+significant_results <- filter(all_results, PVE < 0.0001)
+dim(significant_results)
+
+write.xlsx(signif_results, file = "Dataset/Significant_results.xlsx", rowNames = FALSE)
+```
+

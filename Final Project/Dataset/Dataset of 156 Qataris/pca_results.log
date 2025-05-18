@@ -1,0 +1,27 @@
+PLINK v1.9.0-b.7.7 64-bit (22 Oct 2024)
+Options in effect:
+  --bfile Qatari156_filtered_pruned
+  --out pca_results
+  --pca
+
+Hostname: omar-aldawy-ASUS-TUF-Dash-F15-FX516PM-FX516PM
+Working directory: /home/omar-aldawy/University/Third year/second semester/Bio-Informatics/Labs/Bio-Informatics-Labs/Final Project/Dataset/Dataset of 156 Qataris
+Start time: Sat May 17 21:29:54 2025
+
+Random number seed: 1747506594
+15685 MB RAM detected; reserving 7842 MB for main workspace.
+67735 variants loaded from .bim file.
+156 people (49 males, 107 females) loaded from .fam.
+Using up to 8 threads (change this with --threads).
+Before main variant filters, 156 founders and 0 nonfounders present.
+Calculating allele frequencies... done.
+Warning: 1388 het. haploid genotypes present (see pca_results.hh ); many
+commands treat these as missing.
+Total genotyping rate is 0.998816.
+67735 variants and 156 people pass filters and QC.
+Note: No phenotypes present.
+Excluding 1657 variants on non-autosomes from relationship matrix calc.
+Relationship matrix calculation complete.
+--pca: Results saved to pca_results.eigenval and pca_results.eigenvec .
+
+End time: Sat May 17 21:29:54 2025
