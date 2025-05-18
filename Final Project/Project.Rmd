@@ -27,6 +27,12 @@ if(!require("dplyr", quietly = TRUE))
 
 if(!require("openxlsx", quietly = TRUE))
     install.packages("openxlsx")
+
+if(!require("readxl", quietly = TRUE))
+    install.packages("readxl")
+
+if(!require("ggplot2", quietly = TRUE))
+    install.packages("ggplot2")
 ```
 
 # Task 1 : Compute Kinship using SNPRelate and GENESIS
@@ -40,6 +46,8 @@ library(SeqVarTools)
 library(SeqArray)
 library(dplyr)
 library(openxlsx)
+library(readxl)
+library(ggplot2)
 ```
 
 ```{r}
@@ -142,13 +150,60 @@ write.xlsx(signif_results, file = "Dataset/Significant_results.xlsx", rowNames =
 write.xlsx(all_results, file = "Dataset/All_results.xlsx", rowNames = FALSE)
 ```
 
+```{r}
+heritability_results <- lapply(names(null_models), function(met) {
+  model <- null_models[[met]]
+  h2_ci <- varCompCI(model, prop = FALSE)
+  print(h2_ci)
+})
+
+herit_df <- do.call(rbind, heritability_results)
+```
+
+```{r}
+# --- Task 3: Inflation factor (λ_GC) per metabolite ---------------------
+
+# Function to compute λ_GC from a vector of p‑values
+calc_lambda <- function(p) {
+  # drop invalid p’s
+  p <- p[!is.na(p) & p > 0 & p < 1]
+  # convert to chi² (df=1) and take the median
+  chisq_med <- median(qchisq(p, df = 1, lower.tail = FALSE))
+  # theoretical median of χ²₁ is qchisq(0.5,1)
+  lambda_gc  <- chisq_med / qchisq(0.5, 1)
+  return(lambda_gc)
+}
+
+# Loop over your 'results' list
+inflation_results <- lapply(names(results), function(met) {
+  df <- results[[met]]
+  lambda <- tryCatch(calc_lambda(df$Score.pval),
+                     error = function(e) NA_real_)
+  data.frame(
+    metabolite = met,
+    lambda_gc  = lambda,
+    stringsAsFactors = FALSE
+  )
+})
+
+inflation_df <- do.call(rbind, inflation_results)
+
+# Compute the average λ_GC across all metabolites
+avg_lambda <- mean(inflation_df$lambda_gc, na.rm = TRUE)
+
+# Optionally add the average as a final summary row:
+inflation_df <- rbind(
+  inflation_df,
+  data.frame(metabolite = "AVERAGE", lambda_gc = avg_lambda, stringsAsFactors = FALSE)
+)
+
+# Inspect
+print(inflation_df)
+```
+
 # Task 4: Create Manhattan Plots
 
 ```{r}
-
-library(readxl)
-library(ggplot2)
-
 # 1. Load data
 input_file <- "Dataset/All_results.xlsx"
 df <- read_excel(input_file, sheet = 1)
@@ -211,8 +266,6 @@ for (met in mets) {
   )
 }
 
-\library(dplyr)
-
 # Keep the best P-value per SNP
 df_unique <- df %>%
   filter(!is.na(P), CHR %in% 1:22, P > 0 & P <= 1) %>%
@@ -245,7 +298,6 @@ ggsave(
   height   = 6,
   dpi      = 300
 )
-
 ```
 
 
