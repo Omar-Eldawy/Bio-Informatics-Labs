@@ -142,8 +142,111 @@ write.xlsx(signif_results, file = "Dataset/Significant_results.xlsx", rowNames =
 write.xlsx(all_results, file = "Dataset/All_results.xlsx", rowNames = FALSE)
 ```
 
+# Task 4: Create Manhattan Plots
+
 ```{r}
 
+library(readxl)
+library(ggplot2)
+
+# 1. Load data
+input_file <- "Dataset/All_results.xlsx"
+df <- read_excel(input_file, sheet = 1)
+
+# 2. Rename & clean columns
+df$SNP        <- df$variant.id
+df$CHR        <- as.numeric(df$chr)
+df$BP         <- as.numeric(df$pos)
+df$P          <- as.numeric(df$Score.pval)
+df$Metabolite <- as.factor(df$metabolite)
+
+# 3. Output directory
+out_dir <- "plots"
+if (!dir.exists(out_dir)) dir.create(out_dir)
+
+# 4. Thresholds
+threshold_gw   <- 1e-4
+threshold_sugg <- 1e-5
+
+# 5. Per-metabolite ggplot2 Manhattan plots
+mets <- levels(df$Metabolite)
+
+for (met in mets) {
+  subdf <- subset(df, Metabolite == met)
+  subdf <- subdf[complete.cases(subdf[, c("CHR","BP","P")]), ]
+  subdf <- subset(subdf, CHR %in% 1:22 & P > 0 & P <= 1)
+  
+  if (nrow(subdf) < 10) {
+    warning(sprintf("Skipping %s: only %d valid SNPs", met, nrow(subdf)))
+    next
+  }
+  
+  # Add -log10(P)
+  subdf$negLogP <- -log10(subdf$P)
+  
+  # Plot using ggplot2
+  p <- ggplot(subdf, aes(x = BP, y = negLogP, color = factor(CHR))) +
+    geom_point(alpha = 0.6, size = 0.7) +
+    geom_hline(yintercept = -log10(threshold_gw), linetype = "dashed") +
+    geom_hline(yintercept = -log10(threshold_sugg), linetype = "dotted") +
+    labs(
+      title = paste("Manhattan Plot —", met),
+      x = "Genomic Position (bp)",
+      y = expression(-log[10](P)),
+      color = "Chromosome"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank()
+    )
+  
+  # Save the plot
+  ggsave(
+    filename = file.path(out_dir, paste0("Manhattan_", met, ".png")),
+    plot     = p,
+    width    = 12,
+    height   = 6,
+    dpi      = 300
+  )
+}
+
+\library(dplyr)
+
+# Keep the best P-value per SNP
+df_unique <- df %>%
+  filter(!is.na(P), CHR %in% 1:22, P > 0 & P <= 1) %>%
+  group_by(SNP, CHR, BP) %>%
+  summarize(P = min(P), .groups = "drop") %>%
+  mutate(negLogP = -log10(P))
+
+# Plot
+p_all <- ggplot(df_unique, aes(x = BP, y = negLogP, color = factor(CHR))) +
+  geom_point(alpha = 0.6, size = 0.7) +
+  geom_hline(yintercept = -log10(threshold_gw), linetype = "dashed") +
+  geom_hline(yintercept = -log10(threshold_sugg), linetype = "dotted") +
+  labs(
+    title = "Combined Manhattan Plot (All Metabolites)",
+    x = "Genomic Position (bp)",
+    y = expression(-log[10](P)),
+    color = "Chromosome"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+
+# Save plot
+ggsave(
+  filename = file.path(out_dir, "Manhattan_all_combined.png"),
+  plot     = p_all,
+  width    = 12,
+  height   = 6,
+  dpi      = 300
+)
+
 ```
+
 
 
