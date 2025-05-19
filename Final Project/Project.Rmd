@@ -106,6 +106,7 @@ genoData <- GenotypeData(gds, scanAnnot = scan_annot)
 
 ```{r}
 results <- list()
+null_models <- list()
 
 for (meta in meta.names) {
   df <- all.data[, c("PC1", "PC2", "PC3", meta)]
@@ -124,10 +125,10 @@ for (meta in meta.names) {
   assoc <- assocTestSingle(
     gdsobj = genoIterator,
     null.model = null.model,
-    test = "Score",
     verbose = TRUE
   )
   
+  null_models[[meta]] <- null.model
   assoc$metabolite <- meta
   results[[meta]] <- assoc
 }
@@ -153,7 +154,7 @@ write.xlsx(all_results, file = "Dataset/All_results.xlsx", rowNames = FALSE)
 ```{r}
 heritability_results <- lapply(names(null_models), function(met) {
   model <- null_models[[met]]
-  h2_ci <- varCompCI(model, prop = FALSE)
+  h2_ci <- varCompCI(model, prop = TRUE)
   print(h2_ci)
 })
 
