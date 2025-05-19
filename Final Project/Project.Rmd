@@ -60,7 +60,7 @@ genofile <- snpgdsOpen("Dataset/genotype.gds")
 # Calculate kinship using MLE method
 ibd <- snpgdsIBDMLE(genofile, 
                         num.thread = 6,  
-                        autosome.only = FALSE,
+                        kinship.constraint = TRUE,
                         kinship = TRUE)  
 
 kinship <- ibd$kinship
@@ -74,7 +74,20 @@ high_kinship <- (sum(kinship > 0.1, na.rm = TRUE) - 156) / 2.0
 cat("Number of individuals with kinship > 0.1:", high_kinship, "\n")
 ```
 
+-   Save kinship matrix
+
+```{r}
+write.xlsx(kinship, file = "Dataset/Kinship_Matrix.xlsx", rowNames = TRUE)
+```
+
+-   Load kinship matrix
+
+```{r}
+kinship <- as.matrix(read.xlsx("Dataset/Kinship_Matrix.xlsx", rowNames = TRUE))
+```
+
 # Task 2: Compute mQTLs with Mixed Models
+
 ```{r}
 # Load PCA data
 pca_data <- read.table("Dataset/Dataset of 156 Qataris/pca_results.eigenvec", header = FALSE)
@@ -147,7 +160,7 @@ all_results <- bind_rows(results)
 significant_results <- filter(all_results, Score.pval < 0.0001)
 dim(significant_results)
 
-write.xlsx(signif_results, file = "Dataset/Significant_results.xlsx", rowNames = FALSE)
+write.xlsx(significant_results, file = "Dataset/Significant_results.xlsx", rowNames = FALSE)
 write.xlsx(all_results, file = "Dataset/All_results.xlsx", rowNames = FALSE)
 ```
 
@@ -161,9 +174,11 @@ heritability_results <- lapply(names(null_models), function(met) {
 herit_df <- do.call(rbind, heritability_results)
 ```
 
-```{r}
-# --- Task 3: Inflation factor (λ_GC) per metabolite ---------------------
+# Task 3: Inflation factor calculation
 
+![Inflation Factor Formula](Screenshots/inflation_factor.png)
+
+```{r}
 # Function to compute λ_GC from a vector of p‑values
 calc_lambda <- function(p) {
   # drop invalid p’s
@@ -192,7 +207,7 @@ inflation_df <- do.call(rbind, inflation_results)
 # Compute the average λ_GC across all metabolites
 avg_lambda <- mean(inflation_df$lambda_gc, na.rm = TRUE)
 
-# Optionally add the average as a final summary row:
+# Add the average as a final summary row:
 inflation_df <- rbind(
   inflation_df,
   data.frame(metabolite = "AVERAGE", lambda_gc = avg_lambda, stringsAsFactors = FALSE)
@@ -301,5 +316,152 @@ ggsave(
 )
 ```
 
+# Task 6: Annotate Significant SNPs
 
+## Read the map file and extract the top 20 SNPs
 
+```{r}
+map_data <- read.table("Dataset/input.map", header = FALSE, stringsAsFactors = FALSE)
+
+# Assign column names
+colnames(map_data) <- c("chr", "snp_id", "pos_cM", "pos")
+map_data <- subset(map_data, select= -c(pos_cM))
+```
+
+```{r}
+# Read the Excel file
+df <- read_excel("Dataset/Significant_results.xlsx", sheet = 1)
+
+# Select top 20 unique SNPs based on lowest p-value
+top_snps <- df[order(df$`Score.pval`), ]
+top_snps <- top_snps[!duplicated(top_snps$`variant.id`), ]
+top_snps <- subset(top_snps, select = c("chr", "pos"))
+top_snps <- head(top_snps, 20)
+top_snps$chr[top_snps$chr == "X"] <- 23
+top_snps$chr <- as.integer(top_snps$chr)
+
+top_20snps <- inner_join(top_snps, map_data, by = c("chr", "pos"))
+# Save to a plain text file
+writeLines(top_20snps$snp_id, "Dataset/snps_list.txt")
+```
+
+## Extract the top 20 SNPs from .ped and .map files into new files using Plink.
+
+```{bash, eval=FALSE}
+plink --file input --extract snps_list.txt --make-bed --out top20_SNPs
+```
+
+![Extraction of top 20 SNPs](Screenshots/Extraction.png)
+
+## Convert the top 20 SNPs to VCF format using PLINK.
+
+![Create VCF file](Screenshots/Create_vcf.png)
+
+```{bash, eval=FALSE}
+plink --bfile top20_SNPs --recode vcf --out top20_SNPs_vcf
+```
+
+## Download ANNOVAR and make sure you have Perl on your machine and you download the refGene annotation database for the human genome version hg19
+
+```{bash, eval=FALSE}
+sudo apt update
+sudo apt install perl
+perl -v
+```
+
+![Download the required Database](Screenshots/Database.png)
+
+```{bash, eval=FALSE}
+./annotate_variation.pl -buildver hg19 -downdb -webfrom annovar refGene humandb/
+```
+
+## Annotate the top 20 SNPs using ANNOVAR
+
+-   top20_SNPs_vcf.vcf: Input VCF file containing SNPs to annotate.
+
+-   humandb/: Directory containing ANNOVAR's annotation databases (e.g., refGene).
+
+-   buildver hg19: Specifies the human genome version (hg19).
+
+-   out output/annotated_output: Output prefix and directory for results.
+
+-   remove: Delete intermediate files after annotation.
+
+-   protocol refGene: Use the refGene database for annotation (gene-based).
+
+-   operation g: The operation type is gene-based (g).
+
+-   nastring .: Missing values in the output will be represented as ..
+
+-   vcfinput: Indicates the input file is in VCF format.
+
+-   polish: Refines annotations (e.g., handles multi-allelic variants better).
+
+-   thread 4: Use 4 threads to speed up processing.
+
+![Annotate the top 20 significant SNPs](Screenshots/Annovar.png)
+
+```{bash, eval=FALSE}
+./table_annovar.pl top20_SNPs_vcf.vcf humandb/   -buildver hg19   -out output/annotated_output   -remove   -protocol refGene   -operation g   -nastring .   -vcfinput   -polish   -thread 4
+```
+
+# Task 7: Regional plots using SNIPA
+
+## Get the top 5 most significant unique associated SNPs
+
+```{r}
+df <- read_excel("Dataset/Significant_results.xlsx", sheet = 1)
+
+top_snps <- df[order(df$`Score.pval`), ]
+top_snps <- top_snps[!duplicated(top_snps$`variant.id`), ]
+top_snps <- subset(top_snps, select = c("chr", "pos"))
+top_snps <- head(top_snps, 5)
+top_snps$chr[top_snps$chr == "X"] <- 23
+top_snps$chr <- as.integer(top_snps$chr)
+
+top_5snps <- inner_join(top_snps, map_data, by = c("chr", "pos"))
+# Save to a plain text file
+writeLines(top_5snps$snp_id, "Dataset/top5_SNPs.txt")
+```
+
+## The proxy SNPs in LD with the top 5 most significant unique associated SNPs.
+
+![rs470778_proxy](Snipa/top1_proxy.png)
+
+![rs10995706_proxy](Snipa/top2_proxy.png)
+
+![rs625127_proxy](Snipa/top3_proxy.png)
+
+![rs10805888_proxy](Snipa/top4_proxy.png)
+
+![rs10940680_proxy1](Snipa/top5_proxy1.png)
+
+![rs10940680_proxy2](Snipa/top5_proxy2.png)
+
+![rs10940680_proxy3](Snipa/top5_proxy3.png)
+
+## Some proxy SNPs annotations for each significant SNP
+
+![rs470778 annotation example](Snipa/first_proxy_annot.png)
+
+![rs10995706 annotation example 1](Snipa/second_proxy_annot1.png)
+
+![rs10995706 annotation example 2](Snipa/second_proxy_annot2.png)
+
+![rs625127 annotation example](Snipa/third_proxy_annot.png)
+
+![rs10805888 annotation example](Snipa/fourth_proxy_annot.png)
+
+![rs10940680 annotation example](Snipa/fifth_proxy_annot.png)
+
+## The regional plots for the closest 5 SNPs in the proxy.
+
+![rs470778 region](Snipa/top1_region.png)
+
+![rs10995706 region](Snipa/top2_region.png)
+
+![rs625127 region](Snipa/top3_region.png)
+
+![rs10805888 region](Snipa/top4_region.png)
+
+![rs10940680 region](Snipa/top5_region.png)
