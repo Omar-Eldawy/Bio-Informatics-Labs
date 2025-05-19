@@ -316,6 +316,100 @@ ggsave(
 )
 ```
 
+# Task 5: Metabolite Network
+
+```{r}
+
+
+library(dplyr)
+library(GeneNet)
+library(RCy3)
+
+# Create a matrix to hold the corrected values
+corrected_matrix <- matrix(NA, nrow = nrow(metabolites), ncol = length(meta.names))
+rownames(corrected_matrix) <- rownames(metabolites)
+colnames(corrected_matrix) <- meta.names
+
+# Fill matrix with residuals from each null model
+for (met in meta.names) {
+ model <- null_models[[met]]
+ if (!is.null(model)) {
+  fittedData <- model$fit$fitted.values
+  corrected_matrix[, met] <- fittedData
+ }
+}
+
+# Estimate partial correlations
+pcor <- ggm.estimate.pcor(corrected_matrix)
+
+# Test for significant associations
+network_results <- network.test.edges(pcor)
+
+# Filter significant pairs (pval < 0.05)
+sig_pairs <- network_results %>% 
+ filter(pval < 0.05) %>%
+ arrange(desc(abs(pcor)))
+
+# Save results
+write.csv(sig_pairs, "Dataset/significant_pairs.csv", row.names = FALSE)
+
+cytoscapePing()
+
+# Prepare edges and nodes
+edges <- data.frame(
+ source = as.character(sig_pairs$node1),
+ target = as.character(sig_pairs$node2),
+ weight = sig_pairs$pcor,
+ interaction = "interacts_with",
+ pval = sig_pairs$pval,
+ qval = sig_pairs$qval,
+ stringsAsFactors = FALSE
+)
+
+nodes <- data.frame(
+ id = unique(c(edges$source, edges$target)),
+ name = unique(c(edges$source, edges$target)),
+ stringsAsFactors = FALSE
+)
+
+# Create network in Cytoscape
+createNetworkFromDataFrames(
+ nodes = nodes,
+ edges = edges,
+ title = "Metabolic Network",
+ collection = "Metabolite Correlations"
+)
+
+# Apply layout and visual styles
+layoutNetwork("force-directed")
+
+setNodeShapeDefault("ELLIPSE")
+setNodeSizeDefault(30)
+setNodeLabelMapping("name")
+
+setEdgeLineWidthMapping(
+ table.column = "weight",
+ table.column.values = seq(min(abs(edges$weight)), max(abs(edges$weight)), length.out = 5),
+ widths = seq(1, 3, length.out = 5),
+ mapping.type = "continuous"
+)
+
+setEdgeColorMapping(
+ table.column = "weight",
+ table.column.values = c(min(edges$weight), 0, max(edges$weight)),
+ colors = c("red", "blue", "yellow"),
+ mapping.type = "continuous"
+)
+
+
+analyzeNetwork()
+node.table <- getTableColumns(table = "node")
+write.csv(node.table, "metabolite_network_node_metrics.csv", row.names = FALSE)
+saveSession("Metabolite_Network_Analysis.cys")
+print(head(node.table[, c("name", "Degree", "ClosenessCentrality", "BetweennessCentrality")]))
+
+```
+
 # Task 6: Annotate Significant SNPs
 
 ## Read the map file and extract the top 20 SNPs
