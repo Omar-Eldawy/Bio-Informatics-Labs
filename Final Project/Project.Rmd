@@ -16,7 +16,7 @@ knitr::opts_chunk$set(echo = TRUE)
 if (!require("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
 
-BiocManager::install(c("SNPRelate", "GENESIS", "qqman", "GeneNet", "xlsx", "GWASTools", "SeqVarTools", "SeqArray"))
+BiocManager::install(c("SNPRelate", "GENESIS", "qqman", "GeneNet", "xlsx", "GWASTools", "SeqVarTools", "SeqArray", "RCy3"))
 
 if(!require("SNPRelate", quietly = TRUE))
     install.packages("SNPRelate")
@@ -35,11 +35,14 @@ if(!require("readxl", quietly = TRUE))
 
 if(!require("ggplot2", quietly = TRUE))
     install.packages("ggplot2")
+
+if(!require("qqman", quietly = TRUE))
+    install.packages("qqman")
 ```
 
 # Task 1 : Compute Kinship using SNPRelate and GENESIS
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 # Load required libraries
 library(SNPRelate)
 library(GENESIS)
@@ -50,9 +53,10 @@ library(dplyr)
 library(openxlsx)
 library(readxl)
 library(ggplot2)
+library(qqman)
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Convert PLINK format to GDS format
 snpgdsPED2GDS("Dataset/input.ped", "Dataset/input.map", "Dataset/genotype.gds")
 
@@ -78,7 +82,7 @@ cat("Number of individuals with kinship > 0.1:", high_kinship, "\n")
 
 -   Save kinship matrix
 
-```{r}
+```{r, eval=FALSE}
 write.xlsx(kinship, file = "Dataset/Kinship_Matrix.xlsx", rowNames = TRUE)
 ```
 
@@ -117,6 +121,7 @@ scan_annot <- ScanAnnotationDataFrame(scan_annot_df)
 genoFile <- "Dataset/genotype.gds"
 gds <- GdsGenotypeReader(genoFile)
 genoData <- GenotypeData(gds, scanAnnot = scan_annot)
+alleleB <- getAlleleB(genoData)
 ```
 
 ```{r}
@@ -143,6 +148,7 @@ for (meta in meta.names) {
     verbose = TRUE
   )
   
+  assoc$effect_allele <- alleleB[assoc$variant.id]
   null_models[[meta]] <- null.model
   assoc$metabolite <- meta
   results[[meta]] <- assoc
@@ -158,10 +164,13 @@ close(gds)
 ```
 
 ```{r}
-all_results <- bind_rows(results)  
+all_results <- bind_rows(results)
+all_results$degree_of_freedom <- all_results$n.obs - 4
 significant_results <- filter(all_results, Score.pval < 0.0001)
 dim(significant_results)
+```
 
+```{r}
 write.xlsx(significant_results, file = "Dataset/Significant_results.xlsx", rowNames = FALSE)
 write.xlsx(all_results, file = "Dataset/All_results.xlsx", rowNames = FALSE)
 ```
@@ -181,13 +190,13 @@ herit_df <- do.call(rbind, heritability_results)
 ![Inflation Factor Formula](Screenshots/inflation_factor.png)
 
 ```{r}
-# Function to compute λ_GC from a vector of p‑values
+# Function to compute lambda_GC from a vector of p‑values
 calc_lambda <- function(p) {
-  # drop invalid p’s
+  # drop invalid p's
   p <- p[!is.na(p) & p > 0 & p < 1]
-  # convert to chi² (df=1) and take the median
+  # convert to chi^2 (df=1) and take the median
   chisq_med <- median(qchisq(p, df = 1, lower.tail = FALSE))
-  # theoretical median of χ²₁ is qchisq(0.5,1)
+  # theoretical median of X^2 is qchisq(0.5,1)
   lambda_gc  <- chisq_med / qchisq(0.5, 1)
   return(lambda_gc)
 }
@@ -206,7 +215,7 @@ inflation_results <- lapply(names(results), function(met) {
 
 inflation_df <- do.call(rbind, inflation_results)
 
-# Compute the average λ_GC across all metabolites
+# Compute the average lambda_GC across all metabolites
 avg_lambda <- mean(inflation_df$lambda_gc, na.rm = TRUE)
 
 # Add the average as a final summary row:
@@ -222,16 +231,16 @@ print(inflation_df)
 # Task 4: Create Manhattan Plots
 
 ```{r}
-# 1. Load data
-input_file <- "Dataset/All_results.xlsx"
-df <- read_excel(input_file, sheet = 1)
+# 1. Load the results
+df <- all_results
 
 # 2. Rename & clean columns
 df$SNP        <- df$variant.id
-df$CHR        <- as.numeric(df$chr)
 df$BP         <- as.numeric(df$pos)
 df$P          <- as.numeric(df$Score.pval)
 df$Metabolite <- as.factor(df$metabolite)
+df$chr[df$chr == "X"] <- "23"
+df$CHR <- as.numeric(df$chr)
 
 # 3. Output directory
 out_dir <- "plots"
@@ -247,7 +256,7 @@ mets <- levels(df$Metabolite)
 for (met in mets) {
   subdf <- subset(df, Metabolite == met)
   subdf <- subdf[complete.cases(subdf[, c("CHR","BP","P")]), ]
-  subdf <- subset(subdf, CHR %in% 1:22 & P > 0 & P <= 1)
+  subdf <- subset(subdf, CHR %in% 1:23 & P > 0 & P <= 1)
   
   if (nrow(subdf) < 10) {
     warning(sprintf("Skipping %s: only %d valid SNPs", met, nrow(subdf)))
@@ -257,66 +266,134 @@ for (met in mets) {
   # Add -log10(P)
   subdf$negLogP <- -log10(subdf$P)
   
-  # Plot using ggplot2
-  p <- ggplot(subdf, aes(x = BP, y = negLogP, color = factor(CHR))) +
-    geom_point(alpha = 0.6, size = 0.7) +
-    geom_hline(yintercept = -log10(threshold_gw), linetype = "dashed") +
-    geom_hline(yintercept = -log10(threshold_sugg), linetype = "dotted") +
-    labs(
-      title = paste("Manhattan Plot —", met),
-      x = "Genomic Position (bp)",
-      y = expression(-log[10](P)),
-      color = "Chromosome"
-    ) +
-    theme_bw(base_size = 12) +
-    theme(
-      axis.text.x = element_blank(),
-      axis.ticks.x = element_blank()
-    )
+  #png(
+ #   filename = file.path(out_dir, paste0("Manhattan_", met, ".png")),
+  #  width    = 12,
+  #  height   = 6,
+  #  units    = "in",
+  #  res      = 300
+ # )
   
-  # Save the plot
-  ggsave(
-    filename = file.path(out_dir, paste0("Manhattan_", met, ".png")),
-    plot     = p,
-    width    = 12,
-    height   = 6,
-    dpi      = 300
-  )
+  p <- manhattan(subdf,
+            main = paste("Manhattan Plot —", met),
+            col = c("skyblue", "orange"),
+            suggestiveline = FALSE,
+            genomewideline = -log10(1e-4))
+  
+  #dev.off()
 }
+```
 
-# Keep the best P-value per SNP
-df_unique <- df %>%
-  filter(!is.na(P), CHR %in% 1:22, P > 0 & P <= 1) %>%
-  group_by(SNP, CHR, BP) %>%
-  summarize(P = min(P), .groups = "drop") %>%
-  mutate(negLogP = -log10(P))
+```{r}
+df_unique <- df
 
-# Plot
-p_all <- ggplot(df_unique, aes(x = BP, y = negLogP, color = factor(CHR))) +
-  geom_point(alpha = 0.6, size = 0.7) +
-  geom_hline(yintercept = -log10(threshold_gw), linetype = "dashed") +
-  geom_hline(yintercept = -log10(threshold_sugg), linetype = "dotted") +
-  labs(
-    title = "Combined Manhattan Plot (All Metabolites)",
-    x = "Genomic Position (bp)",
-    y = expression(-log[10](P)),
-    color = "Chromosome"
-  ) +
-  theme_bw(base_size = 12) +
-  theme(
-    axis.text.x = element_blank(),
-    axis.ticks.x = element_blank()
-  )
+df_unique$P <- -log10(df_unique$P)
 
 # Save plot
-ggsave(
-  filename = file.path(out_dir, "Manhattan_all_combined.png"),
-  plot     = p_all,
-  width    = 12,
-  height   = 6,
-  dpi      = 300
-)
+#png("plots/Manhattan_plot_all_metabolites.png", width = 12, height = 6,units = "in", res = 300)
+
+p_all <- manhattan(df_unique,
+            main = "Combined Manhattan Plot (All Metabolites)",
+            col = c("skyblue", "orange"),
+            suggestiveline = FALSE,
+            genomewideline = -log10(1e-4))
+
+#dev.off()
 ```
+
+# Task 5: Metabolite Network
+
+```{r, eval=FALSE}
+library(dplyr)
+library(GeneNet)
+library(RCy3)
+
+# Create a matrix to hold the corrected values
+corrected_matrix <- matrix(NA, nrow = nrow(metabolites), ncol = length(meta.names))
+rownames(corrected_matrix) <- rownames(metabolites)
+colnames(corrected_matrix) <- meta.names
+
+# Fill matrix with residuals from each null model
+for (met in meta.names) {
+ model <- null_models[[met]]
+ if (!is.null(model)) {
+  fittedData <- model$fit$fitted.values
+  corrected_matrix[, met] <- fittedData
+ }
+}
+
+# Estimate partial correlations
+pcor <- ggm.estimate.pcor(corrected_matrix)
+
+# Test for significant associations
+network_results <- network.test.edges(pcor)
+
+# Filter significant pairs (pval < 0.05)
+sig_pairs <- network_results %>% 
+ filter(pval < 0.05) %>%
+ arrange(desc(abs(pcor)))
+
+# Save results
+write.csv(sig_pairs, "Dataset/significant_pairs.csv", row.names = FALSE)
+
+cytoscapePing()
+
+# Prepare edges and nodes
+edges <- data.frame(
+ source = as.character(sig_pairs$node1),
+ target = as.character(sig_pairs$node2),
+ weight = sig_pairs$pcor,
+ interaction = "interacts_with",
+ pval = sig_pairs$pval,
+ qval = sig_pairs$qval,
+ stringsAsFactors = FALSE
+)
+
+nodes <- data.frame(
+ id = unique(c(edges$source, edges$target)),
+ name = unique(c(edges$source, edges$target)),
+ stringsAsFactors = FALSE
+)
+
+# Create network in Cytoscape
+createNetworkFromDataFrames(
+ nodes = nodes,
+ edges = edges,
+ title = "Metabolic Network",
+ collection = "Metabolite Correlations"
+)
+
+# Apply layout and visual styles
+layoutNetwork("force-directed")
+
+setNodeShapeDefault("ELLIPSE")
+setNodeSizeDefault(30)
+setNodeLabelMapping("name")
+
+setEdgeLineWidthMapping(
+ table.column = "weight",
+ table.column.values = seq(min(abs(edges$weight)), max(abs(edges$weight)), length.out = 5),
+ widths = seq(1, 3, length.out = 5),
+ mapping.type = "continuous"
+)
+
+setEdgeColorMapping(
+ table.column = "weight",
+ table.column.values = c(min(edges$weight), 0, max(edges$weight)),
+ colors = c("red", "blue", "yellow"),
+ mapping.type = "continuous"
+)
+
+
+analyzeNetwork()
+node.table <- getTableColumns(table = "node")
+write.csv(node.table, "metabolite_network_node_metrics.csv", row.names = FALSE)
+saveSession("Metabolite_Network_Analysis.cys")
+print(head(node.table[, c("name", "Degree", "ClosenessCentrality", "BetweennessCentrality")]))
+
+```
+
+![Metabolic Network](Network/Metabolic%20Network.png)
 
 # Task 6: Annotate Significant SNPs
 
@@ -353,13 +430,25 @@ writeLines(top_20snps$snp_id, "Dataset/snps_list.txt")
 plink --file input --extract snps_list.txt --make-bed --out top20_SNPs
 ```
 
+![Extraction of top 20 SNPs](Screenshots/Extraction.png)
+
 ## Convert the top 20 SNPs to VCF format using PLINK.
+
+![Create VCF file](Screenshots/Create_vcf.png)
 
 ```{bash, eval=FALSE}
 plink --bfile top20_SNPs --recode vcf --out top20_SNPs_vcf
 ```
 
-## Download ANNOVAR and make sure you download the refGene annotation database for the human genome version hg19
+## Download ANNOVAR and make sure you have Perl on your machine and you download the refGene annotation database for the human genome version hg19
+
+```{bash, eval=FALSE}
+sudo apt update
+sudo apt install perl
+perl -v
+```
+
+![Download the required Database](Screenshots/Database.png)
 
 ```{bash, eval=FALSE}
 ./annotate_variation.pl -buildver hg19 -downdb -webfrom annovar refGene humandb/
@@ -389,14 +478,15 @@ plink --bfile top20_SNPs --recode vcf --out top20_SNPs_vcf
 
 -   thread 4: Use 4 threads to speed up processing.
 
+![Annotate the top 20 significant SNPs](Screenshots/Annovar.png)
+
 ```{bash, eval=FALSE}
 ./table_annovar.pl top20_SNPs_vcf.vcf humandb/   -buildver hg19   -out output/annotated_output   -remove   -protocol refGene   -operation g   -nastring .   -vcfinput   -polish   -thread 4
 ```
 
 ```{r}
-annovar <- read.table("Annovar/annotated_output.hg19_multianno.txt", header = TRUE ,stringsAsFactors = FALSE)
-
-print(annovar)
+data <- read.table("Annovar/annotated_output.hg19_multianno.txt", header = TRUE, sep = "", stringsAsFactors = FALSE)
+print(data)
 ```
 
 # Task 7: Regional plots using SNIPA
